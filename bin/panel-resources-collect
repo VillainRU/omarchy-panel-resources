@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+
+set -u
+
+requested_locale=${PANEL_RESOURCES_LANG:-${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}}
+case "$requested_locale" in
+  [rR][uU]|[rR][uU][_.@-]*) language="ru" ;;
+  *) language="en" ;;
+esac
+
+export LC_ALL=C
+
+declare -a metrics=()
+
+if [[ $language == ru ]]; then
+  label_cpu_load="Загрузка процессора"
+  detail_cpu_load="Суммарная загрузка всех ядер"
+  label_cpu_temp="Температура процессора"
+  label_cpu_frequency="Средняя частота CPU"
+  detail_cpu_frequency="Среднее по активным политикам cpufreq"
+  label_memory="Оперативная память"
+  label_swap="Файл подкачки"
+  label_disk="Системный диск"
+  label_gpu_load="Загрузка видеокарты"
+  label_gpu_temp="Температура GPU"
+  label_gpu_hotspot="GPU Hotspot"
+  label_gpu_memory_temp="Температура видеопамяти"
+  label_gpu_power="Потребление видеокарты"
+  label_gpu_fan="Вентилятор видеокарты"
+  label_gpu_frequency="Частота видеокарты"
+  label_vram="Видеопамять"
+else
+  label_cpu_load="CPU load"
+  detail_cpu_load="Combined load across all cores"
+  label_cpu_temp="CPU temperature"
+  label_cpu_frequency="Average CPU frequency"
+  detail_cpu_frequency="Average across active cpufreq policies"
+  label_memory="Memory"
+  label_swap="Swap"
+  label_disk="System disk"
+  label_gpu_load="GPU load"
+  label_gpu_temp="GPU temperature"
+  label_gpu_hotspot="GPU Hotspot"
+  label_gpu_memory_temp="VRAM temperature"
+  label_gpu_power="GPU power"
+  label_gpu_fan="GPU fan"
+  label_gpu_frequency="GPU frequency"
+  label_vram="VRAM"
+fi
+
+json_escape() {
+  local value=${1-}
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\r'/}
+  printf '%s' "$value"
+}
+
+trim() {
+  local value=${1-}
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+read_number() {
+  local path=$1
+  [[ -r $path ]] || return 1
+  local value
+  IFS= read -r value < "$path" || return 1
+  [[ $value =~ ^-?[0-9]+([.][0-9]+)?$ ]] || return 1
+  printf '%s' "$value"
+}
+
+format_gib() {
+  awk -v bytes="$1" 'BEGIN { printf "%.1f GiB", bytes / 1073741824 }'
+}
+
+add_metric() {
+  local id=$1 kind=$2 label=$3 short_label=$4 value=$5 detail=${6-}
+  metrics+=("$(printf '{\"id\":\"%s\",\"kind\":\"%s\",\"label\":\"%s\",\"shortLabel\":\"%s\",\"value\":\"%s\",\"detail\":\"%s\"}' \
+    "$(json_escape "$id")" \
+    "$(json_escape "$kind")" \
+    "$(json_escape "$label")" \
+    "$(json_escape "$short_label")" \
+    "$(json_escape "$value")" \
+    "$(json_escape "$detail")")")
+}
+
+read_cpu_totals() {
+  local cpu user nice system idle iowait irq softirq steal guest guest_nice
+  read -r cpu user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat
+  printf '%s %s\n' \
+    "$((user + nice + system + idle + iowait + irq + softirq + steal))" \
+    "$((idle + iowait))"
+}
+
+read -r cpu_total_1 cpu_idle_1 < <(read_cpu_totals)
+sleep 0.12
+read -r cpu_total_2 cpu_idle_2 < <(read_cpu_totals)
+cpu_delta=$((cpu_total_2 - cpu_total_1))
+cpu_idle_delta=$((cpu_idle_2 - cpu_idle_1))
+if (( cpu_delta > 0 )); then
+  cpu_usage=$(( ((cpu_delta - cpu_idle_delta) * 100 + cpu_delta / 2) / cpu_delta ))
+  add_metric "cpu.load" "system" "$label_cpu_load" "CPU" "${cpu_usage}%" "$detail_cpu_load"
+fi
+
+best_cpu_temp=""
+best_cpu_label=""
+best_cpu_priority=999
+shopt -s nullglob
+for hwmon in /sys/class/hwmon/hwmon*; do
+  hwmon_name=""
+  [[ -r "$hwmon/name" ]] && IFS= read -r hwmon_name < "$hwmon/name"
+  for input in "$hwmon"/temp*_input; do
+    raw_temp=$(read_number "$input") || continue
+    (( raw_temp > 0 )) || continue
+    label_path=${input%_input}_label
+    label=""
+    [[ -r $label_path ]] && IFS= read -r label < "$label_path"
+    lower_label=${label,,}
+    priority=999
+    case "$lower_label" in
+      tdie) priority=1 ;;
+      "package id 0") priority=2 ;;
+      tctl) priority=3 ;;
+      cputin|"cpu temp"|"cpu temperature") priority=4 ;;
+      tccd1) priority=5 ;;
+    esac
+    if [[ $hwmon_name == coretemp || $hwmon_name == k10temp || $hwmon_name == zenpower ]]; then
+      (( priority > 20 )) && priority=20
+    fi
+    if (( priority < best_cpu_priority )); then
+      best_cpu_priority=$priority
+      best_cpu_temp=$raw_temp
+      best_cpu_label=${label:-$hwmon_name}
+    fi
+  done
+done
+if [[ -n $best_cpu_temp && $best_cpu_priority -lt 999 ]]; then
+  cpu_temp=$((best_cpu_temp / 1000))
+  add_metric "cpu.temp" "system" "$label_cpu_temp" "CPU°" "${cpu_temp}°C" "${best_cpu_label}"
+fi
+
+freq_sum=0
+freq_count=0
+for freq_path in /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq; do
+  freq=$(read_number "$freq_path") || continue
+  freq_sum=$((freq_sum + freq))
+  freq_count=$((freq_count + 1))
+done
+if (( freq_count > 0 )); then
+  avg_mhz=$((freq_sum / freq_count / 1000))
+  if (( avg_mhz >= 1000 )); then
+    freq_value=$(awk -v mhz="$avg_mhz" 'BEGIN { printf "%.1fGHz", mhz / 1000 }')
+  else
+    freq_value="${avg_mhz}MHz"
+  fi
+  add_metric "cpu.frequency" "system" "$label_cpu_frequency" "CPU↯" "$freq_value" "$detail_cpu_frequency"
+fi
+
+mem_total_kib=0
+mem_available_kib=0
+swap_total_kib=0
+swap_free_kib=0
+while read -r key value _; do
+  case "$key" in
+    MemTotal:) mem_total_kib=$value ;;
+    MemAvailable:) mem_available_kib=$value ;;
+    SwapTotal:) swap_total_kib=$value ;;
+    SwapFree:) swap_free_kib=$value ;;
+  esac
+done < /proc/meminfo
+
+if (( mem_total_kib > 0 )); then
+  mem_used_kib=$((mem_total_kib - mem_available_kib))
+  mem_percent=$((mem_used_kib * 100 / mem_total_kib))
+  mem_detail="$(format_gib "$((mem_used_kib * 1024))") / $(format_gib "$((mem_total_kib * 1024))")"
+  add_metric "memory.ram" "system" "$label_memory" "RAM" "${mem_percent}%" "$mem_detail"
+fi
+
+if (( swap_total_kib > 0 )); then
+  swap_used_kib=$((swap_total_kib - swap_free_kib))
+  swap_percent=$((swap_used_kib * 100 / swap_total_kib))
+  swap_detail="$(format_gib "$((swap_used_kib * 1024))") / $(format_gib "$((swap_total_kib * 1024))")"
+  add_metric "memory.swap" "system" "$label_swap" "SWP" "${swap_percent}%" "$swap_detail"
+fi
+
+read -r disk_total disk_used disk_available disk_percent < <(df -P -B1 / 2>/dev/null | awk 'NR == 2 { gsub(/%/, "", $5); print $2, $3, $4, $5 }')
+if [[ ${disk_total:-0} =~ ^[0-9]+$ ]] && (( disk_total > 0 )); then
+  disk_detail="$(format_gib "$disk_used") / $(format_gib "$disk_total")"
+  add_metric "disk.root" "system" "$label_disk" "SSD" "${disk_percent}%" "$disk_detail"
+fi
+
+gpu_vendor="none"
+gpu_tool=""
+gpu_name=""
+gpu_card=""
+for card in /sys/class/drm/card[0-9]*; do
+  [[ -r "$card/device/vendor" ]] || continue
+  IFS= read -r vendor_id < "$card/device/vendor"
+  case "$vendor_id" in
+    0x1002)
+      gpu_vendor="amd"
+      gpu_tool="amdgpu_top"
+      gpu_name="AMD GPU"
+      gpu_card=$card
+      break
+      ;;
+    0x10de)
+      gpu_vendor="nvidia"
+      gpu_tool="nvtop"
+      gpu_name="NVIDIA GPU"
+      gpu_card=$card
+      break
+      ;;
+  esac
+done
+
+if [[ $gpu_vendor == amd && -n $gpu_card ]]; then
+  gpu_device=$(realpath "$gpu_card/device" 2>/dev/null || true)
+  gpu_hwmon=""
+  for hwmon in "$gpu_device"/hwmon/hwmon*; do
+    [[ -d $hwmon ]] || continue
+    name=""
+    [[ -r "$hwmon/name" ]] && IFS= read -r name < "$hwmon/name"
+    if [[ $name == amdgpu ]]; then
+      gpu_hwmon=$hwmon
+      break
+    fi
+  done
+
+  gpu_load=$(read_number "$gpu_device/gpu_busy_percent") || gpu_load=""
+  if [[ -n $gpu_load ]]; then
+    add_metric "gpu.load" "gpu" "$label_gpu_load" "GPU" "${gpu_load}%" "amdgpu · gpu_busy_percent"
+  fi
+
+  if [[ -n $gpu_hwmon ]]; then
+    for label_path in "$gpu_hwmon"/temp*_label; do
+      [[ -r $label_path ]] || continue
+      IFS= read -r sensor_label < "$label_path"
+      input_path=${label_path%_label}_input
+      raw_temp=$(read_number "$input_path") || continue
+      temp_c=$((raw_temp / 1000))
+      lower_label=${sensor_label,,}
+      case "$lower_label" in
+        edge|gpu)
+          add_metric "gpu.edge" "gpu" "$label_gpu_temp" "EDGE" "${temp_c}°C" "$sensor_label"
+          ;;
+        junction|hotspot|"gpu hotspot")
+          add_metric "gpu.hotspot" "gpu" "$label_gpu_hotspot" "HOT" "${temp_c}°C" "$sensor_label"
+          ;;
+        mem|memory|vram)
+          add_metric "gpu.memory_temp" "gpu" "$label_gpu_memory_temp" "MEM°" "${temp_c}°C" "$sensor_label"
+          ;;
+      esac
+    done
+
+    power_path=""
+    [[ -r "$gpu_hwmon/power1_average" ]] && power_path="$gpu_hwmon/power1_average"
+    [[ -z $power_path && -r "$gpu_hwmon/power1_input" ]] && power_path="$gpu_hwmon/power1_input"
+    if [[ -n $power_path ]]; then
+      power_raw=$(read_number "$power_path") || power_raw=""
+      if [[ -n $power_raw ]]; then
+        power_w=$(awk -v raw="$power_raw" 'BEGIN { printf "%.0fW", raw / 1000000 }')
+        add_metric "gpu.power" "gpu" "$label_gpu_power" "GPU W" "$power_w" "PPT"
+      fi
+    fi
+
+    fan_rpm=$(read_number "$gpu_hwmon/fan1_input") || fan_rpm=""
+    if [[ -n $fan_rpm ]]; then
+      add_metric "gpu.fan" "gpu" "$label_gpu_fan" "FAN" "${fan_rpm}RPM" "fan1"
+    else
+      pwm=$(read_number "$gpu_hwmon/pwm1") || pwm=""
+      pwm_max=$(read_number "$gpu_hwmon/pwm1_max") || pwm_max=""
+      if [[ -n $pwm && -n $pwm_max && $pwm_max != 0 ]]; then
+        fan_percent=$(awk -v value="$pwm" -v max="$pwm_max" 'BEGIN { printf "%.0f%%", value * 100 / max }')
+        add_metric "gpu.fan" "gpu" "$label_gpu_fan" "FAN" "$fan_percent" "pwm1"
+      fi
+    fi
+
+    gpu_freq=$(read_number "$gpu_hwmon/freq1_input") || gpu_freq=""
+    if [[ -n $gpu_freq ]]; then
+      gpu_mhz=$(awk -v hz="$gpu_freq" 'BEGIN { printf "%.0fMHz", hz / 1000000 }')
+      add_metric "gpu.frequency" "gpu" "$label_gpu_frequency" "GPU↯" "$gpu_mhz" "sclk"
+    fi
+  fi
+
+  vram_total=$(read_number "$gpu_device/mem_info_vram_total") || vram_total=""
+  vram_used=$(read_number "$gpu_device/mem_info_vram_used") || vram_used=""
+  if [[ -n $vram_total && -n $vram_used && $vram_total != 0 ]]; then
+    vram_percent=$((vram_used * 100 / vram_total))
+    vram_detail="$(format_gib "$vram_used") / $(format_gib "$vram_total")"
+    add_metric "gpu.vram" "gpu" "$label_vram" "VRAM" "${vram_percent}%" "$vram_detail"
+  fi
+elif [[ $gpu_vendor == nvidia ]] && command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia_line=$(nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed,clocks.current.graphics \
+    --format=csv,noheader,nounits --id=0 2>/dev/null | head -n 1)
+  if [[ -n $nvidia_line ]]; then
+    IFS=',' read -r n_load n_temp n_mem_used n_mem_total n_power n_fan n_clock <<< "$nvidia_line"
+    n_load=$(trim "$n_load")
+    n_temp=$(trim "$n_temp")
+    n_mem_used=$(trim "$n_mem_used")
+    n_mem_total=$(trim "$n_mem_total")
+    n_power=$(trim "$n_power")
+    n_fan=$(trim "$n_fan")
+    n_clock=$(trim "$n_clock")
+
+    [[ $n_load =~ ^[0-9]+([.][0-9]+)?$ ]] && add_metric "gpu.load" "gpu" "$label_gpu_load" "GPU" "${n_load%.*}%" "NVML"
+    [[ $n_temp =~ ^[0-9]+([.][0-9]+)?$ ]] && add_metric "gpu.temp" "gpu" "$label_gpu_temp" "GPU°" "${n_temp%.*}°C" "NVML"
+    if [[ $n_mem_used =~ ^[0-9]+([.][0-9]+)?$ && $n_mem_total =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v total="$n_mem_total" 'BEGIN { exit !(total > 0) }'; then
+      n_vram_percent=$(awk -v used="$n_mem_used" -v total="$n_mem_total" 'BEGIN { printf "%.0f", used * 100 / total }')
+      n_vram_detail=$(awk -v used="$n_mem_used" -v total="$n_mem_total" 'BEGIN { printf "%.1f GiB / %.1f GiB", used / 1024, total / 1024 }')
+      add_metric "gpu.vram" "gpu" "$label_vram" "VRAM" "${n_vram_percent}%" "$n_vram_detail"
+    fi
+    if [[ $n_power =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      n_power_value=$(awk -v power="$n_power" 'BEGIN { printf "%.0fW", power }')
+      add_metric "gpu.power" "gpu" "$label_gpu_power" "GPU W" "$n_power_value" "NVML"
+    fi
+    if [[ $n_fan =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      add_metric "gpu.fan" "gpu" "$label_gpu_fan" "FAN" "${n_fan%.*}%" "NVML"
+    fi
+    if [[ $n_clock =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+      add_metric "gpu.frequency" "gpu" "$label_gpu_frequency" "GPU↯" "${n_clock%.*}MHz" "NVML"
+    fi
+  fi
+fi
+
+metrics_json=""
+if (( ${#metrics[@]} > 0 )); then
+  printf -v metrics_json '%s,' "${metrics[@]}"
+  metrics_json=${metrics_json%,}
+fi
+
+printf '{"version":1,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","metrics":[%s]}\n' \
+  "$(json_escape "$language")" \
+  "$(json_escape "$gpu_vendor")" \
+  "$(json_escape "$gpu_tool")" \
+  "$(json_escape "$gpu_name")" \
+  "$metrics_json"
