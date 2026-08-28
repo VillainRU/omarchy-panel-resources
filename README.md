@@ -54,7 +54,7 @@ The Panel Resources icon opens the metric selector. Right-clicking it refreshes 
 - AMD: `amdgpu_top` for the detailed GPU monitor. Metrics are read from the `amdgpu` DRM and hwmon interfaces.
 - NVIDIA: `nvidia-smi` for metrics and `nvtop` for the detailed GPU monitor.
 
-The plugin does not require `sudo`, network access, a background service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
+The plugin does not require elevated privileges, network access, a background service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
 
 ## Validation
 
