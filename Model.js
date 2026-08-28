@@ -44,6 +44,41 @@ function textFor(language, key) {
   return Object.prototype.hasOwnProperty.call(dictionary, key) ? dictionary[key] : key
 }
 
+var MAX_SNAPSHOT_CHARS = 8192
+var MAX_METRICS = 16
+var metricKinds = {
+  "cpu.load": "system",
+  "cpu.temp": "system",
+  "cpu.frequency": "system",
+  "memory.ram": "system",
+  "memory.swap": "system",
+  "disk.root": "system",
+  "gpu.load": "gpu",
+  "gpu.temp": "gpu",
+  "gpu.edge": "gpu",
+  "gpu.hotspot": "gpu",
+  "gpu.memory_temp": "gpu",
+  "gpu.power": "gpu",
+  "gpu.fan": "gpu",
+  "gpu.frequency": "gpu",
+  "gpu.vram": "gpu"
+}
+
+function sanitizeText(value, maxLength) {
+  var limit = Math.max(0, Math.min(256, Number(maxLength) || 0))
+  if (limit === 0) return ""
+  return String(value === undefined || value === null ? "" : value)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/[<>&]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit)
+}
+
+function expectedMetricKind(id) {
+  return Object.prototype.hasOwnProperty.call(metricKinds, id) ? metricKinds[id] : ""
+}
+
 function metricValueTemplate(id) {
   switch (String(id || "")) {
     case "cpu.load":
@@ -83,14 +118,48 @@ function safeSnapshot(raw) {
   }
 
   try {
-    var parsed = JSON.parse(String(raw || ""))
+    var rawText = String(raw || "")
+    if (rawText.length === 0 || rawText.length > MAX_SNAPSHOT_CHARS) return fallback
+    var parsed = JSON.parse(rawText)
     if (!parsed || typeof parsed !== "object") return fallback
-    if (!Array.isArray(parsed.metrics)) parsed.metrics = []
-    parsed.language = normalizeLanguage(parsed.language)
-    parsed.gpuVendor = String(parsed.gpuVendor || "none")
-    parsed.gpuTool = String(parsed.gpuTool || "")
-    parsed.gpuName = String(parsed.gpuName || "")
-    return parsed
+    var vendor = sanitizeText(parsed.gpuVendor, 8).toLowerCase()
+    if (vendor !== "amd" && vendor !== "nvidia") vendor = "none"
+
+    var result = {
+      version: 1,
+      language: normalizeLanguage(parsed.language),
+      gpuVendor: vendor,
+      gpuTool: vendor === "amd" ? "amdgpu_top" : (vendor === "nvidia" ? "nvtop" : ""),
+      gpuName: sanitizeText(parsed.gpuName, 64),
+      metrics: []
+    }
+    if (!Array.isArray(parsed.metrics)) return result
+
+    var seen = {}
+    for (var i = 0; i < parsed.metrics.length && result.metrics.length < MAX_METRICS; i++) {
+      var metric = parsed.metrics[i]
+      if (!metric || typeof metric !== "object" || Array.isArray(metric)) continue
+      var id = sanitizeText(metric.id, 48)
+      var kind = expectedMetricKind(id)
+      if (kind === "" || seen[id]) continue
+
+      var label = sanitizeText(metric.label, 64)
+      var shortLabel = sanitizeText(metric.shortLabel, 12)
+      var value = sanitizeText(metric.value, 16)
+      var detail = sanitizeText(metric.detail, 96)
+      if (label === "" || shortLabel === "" || value === "") continue
+
+      seen[id] = true
+      result.metrics.push({
+        id: id,
+        kind: kind,
+        label: label,
+        shortLabel: shortLabel,
+        value: value,
+        detail: detail
+      })
+    }
+    return result
   } catch (e) {
     return fallback
   }
@@ -99,7 +168,9 @@ function safeSnapshot(raw) {
 function normalizeEnabled(value) {
   var result = {}
   if (!value || typeof value !== "object" || Array.isArray(value)) return result
-  for (var key in value) result[key] = value[key] === true
+  for (var key in value) {
+    if (expectedMetricKind(key) !== "") result[key] = value[key] === true
+  }
   return result
 }
 
@@ -148,6 +219,8 @@ if (typeof module !== "undefined") {
     normalizeLanguage: normalizeLanguage,
     languageFromLocale: languageFromLocale,
     textFor: textFor,
+    sanitizeText: sanitizeText,
+    expectedMetricKind: expectedMetricKind,
     metricValueTemplate: metricValueTemplate,
     safeSnapshot: safeSnapshot,
     normalizeEnabled: normalizeEnabled,

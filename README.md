@@ -56,6 +56,8 @@ The Panel Resources icon opens the metric selector. Right-clicking it refreshes 
 
 The plugin does not require elevated privileges, network access, a background service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
 
+Telemetry collection is bounded by a two-second process deadline and an 8 KiB producer/QML payload ceiling. Only 16 allowlisted metric IDs are accepted; all displayed fields have fixed length limits, control characters and rich-text delimiters are removed, and telemetry-backed QML text is rendered as `Text.PlainText`.
+
 ## Validation
 
 ```bash

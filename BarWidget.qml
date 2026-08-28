@@ -16,6 +16,17 @@ BarWidget {
 
   function textFor(key) { return Model.textFor(language, key) }
 
+  function metricTooltip(metric) {
+    var label = Model.sanitizeText(metric.label, 64)
+    var value = Model.sanitizeText(metric.value, 16)
+    var detail = Model.sanitizeText(metric.detail, 96)
+    var tool = metric.kind === "gpu" && panelLoader.item
+      ? panelLoader.item.gpuToolDisplayName : "btop"
+    return label + ": " + value
+      + (detail !== "" ? "\n" + detail : "")
+      + "\n" + textFor("leftClickOpen") + " " + tool
+  }
+
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
@@ -72,12 +83,10 @@ BarWidget {
         id: metricButton
         required property var modelData
         bar: root.bar
-        text: modelData.shortLabel + " " + modelData.value
+        text: ""
+        hasVisualContent: true
         labelVisible: false
-        tooltipText: modelData.label + ": " + modelData.value
-          + (modelData.detail ? "\n" + modelData.detail : "")
-          + "\n" + root.textFor("leftClickOpen") + " " + (modelData.kind === "gpu" && panelLoader.item
-            ? panelLoader.item.gpuToolDisplayName : "btop")
+        tooltipText: root.metricTooltip(modelData)
         fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
         fontSize: Style.font.body
         horizontalMargin: 5
@@ -113,6 +122,7 @@ BarWidget {
             anchors.left: parent.left
             anchors.baseline: metricValue.baseline
             text: metricButton.modelData.shortLabel
+            textFormat: Text.PlainText
             color: metricButton.foreground
             font.family: metricButton.fontFamily
             font.pixelSize: Style.font.caption
@@ -124,6 +134,7 @@ BarWidget {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: metricButton.modelData.value
+            textFormat: Text.PlainText
             color: metricButton.foreground
             font.family: metricButton.fontFamily
             font.pixelSize: metricButton.fontSize

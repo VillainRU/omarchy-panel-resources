@@ -11,6 +11,9 @@ esac
 export LC_ALL=C
 
 declare -a metrics=()
+declare -A metric_ids=()
+MAX_METRICS=16
+MAX_OUTPUT_BYTES=8192
 
 if [[ $language == ru ]]; then
   label_cpu_load="Загрузка процессора"
@@ -64,6 +67,22 @@ trim() {
   printf '%s' "$value"
 }
 
+sanitize_text() {
+  local value=${1-} max_length=${2:-64}
+  local raw_limit=$((max_length * 4)) clean="" char
+  local i
+  (( ${#value} > raw_limit )) && value=${value:0:raw_limit}
+  for ((i = 0; i < ${#value} && ${#clean} < max_length; i++)); do
+    char=${value:i:1}
+    [[ $char == [[:cntrl:]] ]] && continue
+    case "$char" in
+      '<'|'>'|'&') continue ;;
+    esac
+    clean+=$char
+  done
+  trim "$clean"
+}
+
 read_number() {
   local path=$1
   [[ -r $path ]] || return 1
@@ -79,6 +98,23 @@ format_gib() {
 
 add_metric() {
   local id=$1 kind=$2 label=$3 short_label=$4 value=$5 detail=${6-}
+  local expected_kind
+  case "$id" in
+    cpu.load|cpu.temp|cpu.frequency|memory.ram|memory.swap|disk.root) expected_kind="system" ;;
+    gpu.load|gpu.temp|gpu.edge|gpu.hotspot|gpu.memory_temp|gpu.power|gpu.fan|gpu.frequency|gpu.vram) expected_kind="gpu" ;;
+    *) return 0 ;;
+  esac
+  [[ $kind == "$expected_kind" ]] || return 0
+  [[ -z ${metric_ids[$id]+x} ]] || return 0
+  (( ${#metrics[@]} < MAX_METRICS )) || return 0
+
+  label=$(sanitize_text "$label" 64)
+  short_label=$(sanitize_text "$short_label" 12)
+  value=$(sanitize_text "$value" 16)
+  detail=$(sanitize_text "$detail" 96)
+  [[ -n $label && -n $short_label && -n $value ]] || return 0
+
+  metric_ids[$id]=1
   metrics+=("$(printf '{\"id\":\"%s\",\"kind\":\"%s\",\"label\":\"%s\",\"shortLabel\":\"%s\",\"value\":\"%s\",\"detail\":\"%s\"}' \
     "$(json_escape "$id")" \
     "$(json_escape "$kind")" \
@@ -187,7 +223,7 @@ if (( swap_total_kib > 0 )); then
   add_metric "memory.swap" "system" "$label_swap" "SWP" "${swap_percent}%" "$swap_detail"
 fi
 
-read -r disk_total disk_used disk_available disk_percent < <(df -P -B1 / 2>/dev/null | awk 'NR == 2 { gsub(/%/, "", $5); print $2, $3, $4, $5 }')
+read -r disk_total disk_used disk_available disk_percent < <(df -P -B1 / 2>/dev/null | awk 'NR == 2 { gsub(/%/, "", $5); print $2, $3, $4, $5; exit }')
 if [[ ${disk_total:-0} =~ ^[0-9]+$ ]] && (( disk_total > 0 )); then
   disk_detail="$(format_gib "$disk_used") / $(format_gib "$disk_total")"
   add_metric "disk.root" "system" "$label_disk" "SSD" "${disk_percent}%" "$disk_detail"
@@ -296,7 +332,7 @@ if [[ $gpu_vendor == amd && -n $gpu_card ]]; then
   fi
 elif [[ $gpu_vendor == nvidia ]] && command -v nvidia-smi >/dev/null 2>&1; then
   nvidia_line=$(nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed,clocks.current.graphics \
-    --format=csv,noheader,nounits --id=0 2>/dev/null | head -n 1)
+    --format=csv,noheader,nounits --id=0 2>/dev/null | head -c 1024 | head -n 1)
   if [[ -n $nvidia_line ]]; then
     IFS=',' read -r n_load n_temp n_mem_used n_mem_total n_power n_fan n_clock <<< "$nvidia_line"
     n_load=$(trim "$n_load")
@@ -333,9 +369,14 @@ if (( ${#metrics[@]} > 0 )); then
   metrics_json=${metrics_json%,}
 fi
 
-printf '{"version":1,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","metrics":[%s]}\n' \
+payload=$(printf '{"version":1,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","metrics":[%s]}' \
   "$(json_escape "$language")" \
   "$(json_escape "$gpu_vendor")" \
   "$(json_escape "$gpu_tool")" \
   "$(json_escape "$gpu_name")" \
-  "$metrics_json"
+  "$metrics_json")
+if (( ${#payload} > MAX_OUTPUT_BYTES )); then
+  printf 'collector output exceeds %d bytes\n' "$MAX_OUTPUT_BYTES" >&2
+  exit 70
+fi
+printf '%s\n' "$payload"

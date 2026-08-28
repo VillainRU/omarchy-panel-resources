@@ -25,6 +25,11 @@ Panel {
   property var enabledMetrics: ({})
   property int enabledRevision: 0
   property string errorText: ""
+  property string collectorOutputText: ""
+  property string collectorErrorText: ""
+  property int collectorOutputLines: 0
+  property bool collectorOutputRejected: false
+  property bool collectorTimedOut: false
 
   readonly property var metrics: snapshot.metrics || []
   readonly property string language: Model.normalizeLanguage(snapshot.language)
@@ -36,6 +41,8 @@ Panel {
   readonly property int refreshIntervalMs: Math.max(1, Number(setting("refreshIntervalSec", 2)) || 2) * 1000
   readonly property string collectorPath: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/" + moduleName + "/bin/panel-resources-collect"
+  readonly property int collectorOutputLimit: 8192
+  readonly property int collectorErrorLimit: 512
 
   function textFor(key) { return Model.textFor(language, key) }
 
@@ -91,6 +98,47 @@ Panel {
     if (!collectorProc.running) collectorProc.running = true
   }
 
+  function resetCollectorCapture() {
+    collectorOutputText = ""
+    collectorErrorText = ""
+    collectorOutputLines = 0
+    collectorOutputRejected = false
+    collectorTimedOut = false
+  }
+
+  function captureCollectorOutput(line) {
+    collectorOutputLines++
+    var value = String(line || "")
+    if (collectorOutputLines !== 1 || value.length > collectorOutputLimit) {
+      collectorOutputRejected = true
+      collectorOutputText = ""
+      return
+    }
+    collectorOutputText = value
+  }
+
+  function captureCollectorError(line) {
+    if (collectorErrorText.length >= collectorErrorLimit) return
+    var value = Model.sanitizeText(line, 256)
+    if (value === "") return
+    var separator = collectorErrorText === "" ? "" : " · "
+    collectorErrorText = (collectorErrorText + separator + value).slice(0, collectorErrorLimit)
+  }
+
+  function finishCollector(exitCode) {
+    collectorDeadline.stop()
+    if (collectorTimedOut || exitCode === 124 || exitCode === 137) {
+      errorText = textFor("collectionError")
+      return
+    }
+    if (exitCode === 0 && !collectorOutputRejected && collectorOutputText !== "") {
+      applySnapshot(collectorOutputText)
+      return
+    }
+    errorText = textFor("collectionError")
+    if (collectorErrorText !== "") console.warn("panel-resources:", collectorErrorText)
+  }
+
   function launchForMetric(id) {
     var metric = Model.metricById(metrics, id)
     if (!metric) return
@@ -121,27 +169,36 @@ Panel {
     onTriggered: root.refresh()
   }
 
+  Timer {
+    id: collectorDeadline
+    interval: 3000
+    repeat: false
+    onTriggered: {
+      root.collectorTimedOut = true
+      if (collectorProc.running) collectorProc.running = false
+    }
+  }
+
   Process {
     id: collectorProc
-    command: [root.collectorPath]
+    command: ["/usr/bin/timeout", "--signal=TERM", "--kill-after=0.5s", "2s", root.collectorPath]
 
-    stdout: StdioCollector {
-      id: collectorOutput
-      waitForEnd: true
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: function(line) { root.captureCollectorOutput(line) }
     }
 
-    stderr: StdioCollector {
-      id: collectorError
-      waitForEnd: true
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: function(line) { root.captureCollectorError(line) }
     }
 
+    onStarted: {
+      root.resetCollectorCapture()
+      collectorDeadline.restart()
+    }
     onExited: function(exitCode) {
-      if (exitCode === 0) root.applySnapshot(collectorOutput.text)
-      else {
-        root.errorText = root.textFor("collectionError")
-        if (collectorError.text.trim() !== "")
-          console.warn("panel-resources:", collectorError.text.trim())
-      }
+      Qt.callLater(function() { root.finishCollector(exitCode) })
     }
   }
 
@@ -188,6 +245,7 @@ Panel {
 
               Text {
                 text: "Panel Resources"
+                textFormat: Text.PlainText
                 color: root.barForeground
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
@@ -198,6 +256,7 @@ Panel {
                 text: root.snapshot.gpuVendor === "none"
                   ? root.textFor("systemMetrics") + " · btop"
                   : root.textFor("system") + " · btop  |  GPU · " + root.gpuToolDisplayName
+                textFormat: Text.PlainText
                 color: Qt.darker(root.barForeground, 1.35)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
@@ -219,6 +278,7 @@ Panel {
             visible: root.errorText !== ""
             width: parent.width
             text: root.errorText
+            textFormat: Text.PlainText
             color: Color.urgent
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.body
@@ -253,6 +313,7 @@ Panel {
                 Text {
                   width: parent.width
                   text: systemMetricRow.metric.label
+                  textFormat: Text.PlainText
                   color: root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
@@ -263,6 +324,7 @@ Panel {
                   width: parent.width
                   visible: systemMetricRow.metric.detail !== ""
                   text: systemMetricRow.metric.detail
+                  textFormat: Text.PlainText
                   color: Qt.darker(root.barForeground, 1.4)
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -276,6 +338,7 @@ Panel {
                 anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: systemMetricRow.metric.value
+                textFormat: Text.PlainText
                 color: Color.accent
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.body
@@ -329,6 +392,7 @@ Panel {
                 Text {
                   width: parent.width
                   text: gpuMetricRow.metric.label
+                  textFormat: Text.PlainText
                   color: root.barForeground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.body
@@ -339,6 +403,7 @@ Panel {
                   width: parent.width
                   visible: gpuMetricRow.metric.detail !== ""
                   text: gpuMetricRow.metric.detail
+                  textFormat: Text.PlainText
                   color: Qt.darker(root.barForeground, 1.4)
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -352,6 +417,7 @@ Panel {
                 anchors.rightMargin: Style.space(10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: gpuMetricRow.metric.value
+                textFormat: Text.PlainText
                 color: Color.accent
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.body
@@ -383,6 +449,7 @@ Panel {
             visible: root.metrics.length > 0
             width: parent.width
             text: root.textFor("selectorHint")
+            textFormat: Text.PlainText
             color: Qt.darker(root.barForeground, 1.4)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
