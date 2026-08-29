@@ -11,6 +11,15 @@ snapshot_bytes=$(printf '%s' "$snapshot" | wc -c)
 
 jq -e '
   (.metrics | length) <= 16
+  and (.dependencies | length) <= 8
+  and all(.dependencies[];
+    (.id | IN(
+      "linux.hwmon", "btop", "zenpower", "k10temp", "coretemp",
+      "amdgpu", "amdgpu_top", "nvidia", "nvtop"
+    ))
+    and (.installed | type) == "boolean"
+    and (keys | sort) == (["id", "installed"] | sort)
+  )
   and all(.metrics[];
     (.id | IN(
       "cpu.load", "cpu.temp", "cpu.power", "cpu.frequency", "memory.ram", "memory.swap", "disk.root",
@@ -40,5 +49,7 @@ rg -q 'stdout: SplitParser' "$repo_dir/Panel.qml"
 rg -q 'stderr: SplitParser' "$repo_dir/Panel.qml"
 rg -q 'textFormat: Text.PlainText' "$repo_dir/BarWidget.qml"
 rg -q 'textFormat: Text.PlainText' "$repo_dir/Panel.qml"
+rg -q 'omarchy-launch-browser' "$repo_dir/Panel.qml"
+! rg -q 'dependency\.url|modelData\.url' "$repo_dir/Panel.qml"
 
 printf 'Security boundary tests passed\n'

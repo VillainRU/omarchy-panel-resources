@@ -28,7 +28,7 @@ omarchy plugin remove io.github.villainru.panel-resources
 - AMD: GPU load, edge temperature, hotspot (`junction`), memory temperature, VRAM, power, fan and clock.
 - NVIDIA: GPU load, temperature, VRAM, power, fan and clock.
 
-Only metrics exposed by the current hardware are listed. Switches in the popup persist directly in Omarchy's `shell.json` entry for the widget.
+Only metrics exposed by the current hardware are listed. The **System** tab contains the metric switches, which persist directly in Omarchy's `shell.json` entry for the widget.
 
 The popup follows the system message locale: Russian is used for `ru_*`, while English is the fallback for every other locale. Technical sensor and module names such as `CPU`, `GPU`, `edge` and `junction` are not translated.
 
@@ -44,9 +44,11 @@ The collector reads the same kernel interfaces used by system monitors instead o
 
 Left-clicking a system metric on the bar opens `btop`. Left-clicking a GPU metric opens `amdgpu_top` for AMD or `nvtop` for NVIDIA through `omarchy-launch-tui`.
 
-The Panel Resources icon opens the metric selector. Right-clicking it refreshes immediately.
+The Panel Resources icon opens the popup. Right-clicking it refreshes immediately.
 
 ## Dependencies
+
+The **Dependencies** tab reports the locally detected monitoring utilities and kernel drivers. Green means available and red means unavailable. Its GitHub buttons open only static, allowlisted official project pages through Omarchy's configured browser; the plugin never installs packages or runs instructions from a web page.
 
 - Omarchy with the QuickShell plugin system.
 - Standard system tools: Bash, `awk`, `df`, `realpath` and access to Linux `/proc` and `/sys` metrics.
@@ -57,7 +59,7 @@ The Panel Resources icon opens the metric selector. Right-clicking it refreshes 
 
 The plugin does not require elevated privileges, network access, a background service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
 
-Telemetry collection is bounded by a two-second process deadline and an 8 KiB producer/QML payload ceiling. Only 16 allowlisted metric IDs are accepted; all displayed fields have fixed length limits, control characters and rich-text delimiters are removed, and telemetry-backed QML text is rendered as `Text.PlainText`.
+Telemetry collection is bounded by a two-second process deadline and an 8 KiB producer/QML payload ceiling. Only 16 allowlisted metric IDs and eight allowlisted dependency IDs are accepted; dependency URLs and display metadata never come from collector output. All displayed telemetry fields have fixed length limits, control characters and rich-text delimiters are removed, and telemetry-backed QML text is rendered as `Text.PlainText`.
 
 ## Validation
 

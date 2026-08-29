@@ -3,6 +3,7 @@ const Model = require("../Model.js")
 
 const fallback = Model.safeSnapshot("not-json")
 assert.deepEqual(fallback.metrics, [])
+assert.deepEqual(fallback.dependencies, [])
 assert.equal(fallback.gpuVendor, "none")
 assert.equal(fallback.language, "en")
 
@@ -11,6 +12,7 @@ assert.equal(Model.normalizeLanguage("en_US.UTF-8"), "en")
 assert.equal(Model.normalizeLanguage("de_DE.UTF-8"), "en")
 assert.equal(Model.textFor("ru", "showOnBar"), "Показать на панели")
 assert.equal(Model.textFor("en", "showOnBar"), "Show on bar")
+assert.equal(Model.textFor("ru", "dependencies"), "Зависимости")
 assert.equal(Model.metricValueTemplate("cpu.load"), "100%")
 assert.equal(Model.metricValueTemplate("gpu.hotspot"), "100°C")
 assert.equal(Model.metricValueTemplate("gpu.fan"), "9999RPM")
@@ -20,6 +22,12 @@ const snapshot = Model.safeSnapshot(JSON.stringify({
   language: "ru_RU",
   gpuVendor: "amd",
   gpuTool: "amdgpu_top",
+  dependencies: [
+    { id: "linux.hwmon", installed: true },
+    { id: "btop", installed: false },
+    { id: "amdgpu", installed: true },
+    { id: "amdgpu_top", installed: true }
+  ],
   metrics: [
     { id: "cpu.load", kind: "system", label: "CPU load", shortLabel: "CPU", value: "8%", detail: "All cores" },
     { id: "cpu.power", kind: "system", label: "CPU power", shortLabel: "CPU W", value: "40W", detail: "zenpower" },
@@ -30,6 +38,12 @@ const snapshot = Model.safeSnapshot(JSON.stringify({
 
 assert.equal(snapshot.gpuVendor, "amd")
 assert.equal(snapshot.language, "ru")
+assert.equal(snapshot.dependencies.length, 4)
+assert.equal(snapshot.dependencies[1].id, "btop")
+assert.equal(snapshot.dependencies[1].installed, false)
+assert.equal(Model.dependencyInfo("btop").name, "btop")
+assert.match(Model.dependencyInfo("btop").url, /^https:\/\/github\.com\//)
+assert.equal(Model.dependencyInfo("unknown"), null)
 assert.equal(Model.metricsForKind(snapshot.metrics, "gpu").length, 2)
 assert.equal(Model.isEnabled({}, "cpu.load"), true)
 assert.equal(Model.isEnabled({}, "gpu.hotspot"), true)
@@ -56,11 +70,17 @@ const hostile = Model.safeSnapshot(JSON.stringify({
   gpuVendor: "nvidia<script>",
   gpuTool: "sh",
   gpuName: "<b>GPU</b>\u0007",
+  dependencies: [
+    { id: "btop", installed: "yes", url: "file:///etc/passwd", name: "attacker" },
+    { id: "unknown", installed: true, url: "https://evil.example" },
+    { id: "btop", installed: true }
+  ],
   metrics: hostileMetrics
 }))
 assert.equal(hostile.gpuVendor, "none")
 assert.equal(hostile.gpuTool, "")
 assert.equal(hostile.metrics.length, 2)
+assert.deepEqual(hostile.dependencies, [{ id: "btop", installed: false }])
 for (const metric of hostile.metrics) {
   assert.equal(Model.expectedMetricKind(metric.id), metric.kind)
   assert.ok(metric.label.length <= 64)

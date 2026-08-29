@@ -20,8 +20,10 @@ Panel {
     gpuVendor: "none",
     gpuTool: "",
     gpuName: "",
-    metrics: []
+    metrics: [],
+    dependencies: []
   })
+  property string activeTab: "system"
   property var enabledMetrics: ({})
   property int enabledRevision: 0
   property string errorText: ""
@@ -32,6 +34,7 @@ Panel {
   property bool collectorTimedOut: false
 
   readonly property var metrics: snapshot.metrics || []
+  readonly property var dependencies: snapshot.dependencies || []
   readonly property string language: Model.normalizeLanguage(snapshot.language)
   readonly property var systemMetrics: Model.metricsForKind(metrics, "system")
   readonly property var gpuMetrics: Model.metricsForKind(metrics, "gpu")
@@ -86,11 +89,11 @@ Panel {
 
   function applySnapshot(raw) {
     var parsed = Model.safeSnapshot(raw)
+    snapshot = parsed
     if (!parsed.metrics || parsed.metrics.length === 0) {
       errorText = textFor("sensorsNotFound")
       return
     }
-    snapshot = parsed
     errorText = ""
   }
 
@@ -145,6 +148,12 @@ Panel {
     var command = metric.kind === "gpu" ? snapshot.gpuTool : "btop"
     if (!command) return
     Quickshell.execDetached(["omarchy-launch-tui", command])
+  }
+
+  function openDependencyPage(id) {
+    var info = Model.dependencyInfo(id)
+    if (!info || !/^https:\/\/github\.com\//.test(String(info.url || ""))) return
+    Quickshell.execDetached(["omarchy-launch-browser", info.url])
   }
 
   function gpuSectionTitle() {
@@ -252,14 +261,30 @@ Panel {
                 font.bold: true
               }
 
-              Text {
-                text: root.snapshot.gpuVendor === "none"
-                  ? root.textFor("systemMetrics") + " · btop"
-                  : root.textFor("system") + " · btop  |  GPU · " + root.gpuToolDisplayName
-                textFormat: Text.PlainText
-                color: Qt.darker(root.barForeground, 1.35)
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.caption
+              Row {
+                spacing: Style.space(4)
+
+                Button {
+                  text: root.textFor("system")
+                  selected: root.activeTab === "system"
+                  foreground: root.barForeground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.space(6)
+                  verticalPadding: Style.space(2)
+                  onClicked: root.activeTab = "system"
+                }
+
+                Button {
+                  text: root.textFor("dependencies")
+                  selected: root.activeTab === "dependencies"
+                  foreground: root.barForeground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.space(6)
+                  verticalPadding: Style.space(2)
+                  onClicked: root.activeTab = "dependencies"
+                }
               }
             }
 
@@ -273,6 +298,12 @@ Panel {
               onClicked: root.refresh()
             }
           }
+
+          Column {
+            id: systemTabContent
+            visible: root.activeTab === "system"
+            width: parent.width
+            spacing: Style.space(10)
 
           Text {
             visible: root.errorText !== ""
@@ -454,6 +485,104 @@ Panel {
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
             wrapMode: Text.Wrap
+          }
+          }
+
+          Column {
+            id: dependenciesTabContent
+            visible: root.activeTab === "dependencies"
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSeparator { visible: root.dependencies.length > 0 }
+
+            Repeater {
+              model: root.dependencies
+              delegate: Item {
+                id: dependencyRow
+                property var dependency: modelData
+                property var info: Model.dependencyInfo(dependency.id) || ({
+                  name: dependency.id,
+                  descriptionKey: "",
+                  url: ""
+                })
+
+                width: dependenciesTabContent.width
+                implicitHeight: Math.max(dependencyLabels.implicitHeight, dependencyStatus.implicitHeight, dependencyPageButton.implicitHeight)
+
+                Column {
+                  id: dependencyLabels
+                  anchors.left: parent.left
+                  anchors.right: dependencyStatus.left
+                  anchors.rightMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(1)
+
+                  Text {
+                    width: parent.width
+                    text: dependencyRow.info.name
+                    textFormat: Text.PlainText
+                    color: root.barForeground
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    width: parent.width
+                    text: root.textFor(dependencyRow.info.descriptionKey)
+                    textFormat: Text.PlainText
+                    color: Qt.darker(root.barForeground, 1.4)
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
+                }
+
+                Text {
+                  id: dependencyStatus
+                  anchors.right: dependencyPageButton.left
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: dependencyRow.dependency.installed
+                    ? root.textFor("installed")
+                    : root.textFor("notInstalled")
+                  textFormat: Text.PlainText
+                  color: dependencyRow.dependency.installed ? "#55c878" : Color.urgent
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Button {
+                  id: dependencyPageButton
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.textFor("openGithub")
+                  tooltipText: root.textFor("dependencyHint")
+                  foreground: root.barForeground
+                  fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+                  fontSize: Style.font.caption
+                  horizontalPadding: Style.space(7)
+                  verticalPadding: Style.space(3)
+                  bordered: true
+                  onClicked: root.openDependencyPage(dependencyRow.dependency.id)
+                }
+              }
+            }
+
+            PanelSeparator { visible: root.dependencies.length > 0 }
+
+            Text {
+              width: parent.width
+              text: root.textFor("dependencyHint")
+              textFormat: Text.PlainText
+              color: Qt.darker(root.barForeground, 1.4)
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.Wrap
+            }
           }
         }
       }

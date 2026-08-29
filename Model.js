@@ -14,13 +14,27 @@ var translations = {
     gpuMonitor: "GPU monitor",
     graphicsCard: "Graphics card",
     system: "System",
+    dependencies: "Dependencies",
     systemMetrics: "System metrics",
     refreshSensors: "Refresh sensors",
     removeFromBar: "Remove from bar",
     showOnBar: "Show on bar",
     selectorHint: "The switch adds a metric to the bar. Left-click a bar metric to open its detailed monitor.",
     chooseMetrics: "choose metrics",
-    leftClickOpen: "Left click: open"
+    leftClickOpen: "Left click: open",
+    installed: "Installed",
+    notInstalled: "Not installed",
+    openGithub: "GitHub",
+    dependencyHint: "Statuses are detected locally. GitHub opens the official project page; nothing is installed automatically.",
+    dependencyLinux: "Kernel interfaces used for system sensor data",
+    dependencyBtop: "Detailed system monitor opened from CPU metrics",
+    dependencyZenpower: "AMD CPU temperature and power driver",
+    dependencyK10temp: "AMD CPU temperature driver",
+    dependencyCoretemp: "Intel CPU temperature driver",
+    dependencyAmdgpu: "AMD GPU sensor driver",
+    dependencyAmdgpuTop: "Detailed AMD GPU monitor",
+    dependencyNvidia: "NVIDIA driver and nvidia-smi sensor utility",
+    dependencyNvtop: "Detailed NVIDIA GPU monitor"
   },
   ru: {
     sensorsNotFound: "Датчики не обнаружены",
@@ -28,13 +42,27 @@ var translations = {
     gpuMonitor: "Монитор GPU",
     graphicsCard: "Видеокарта",
     system: "Система",
+    dependencies: "Зависимости",
     systemMetrics: "Системные показатели",
     refreshSensors: "Обновить датчики",
     removeFromBar: "Убрать с панели",
     showOnBar: "Показать на панели",
     selectorHint: "Тумблер добавляет показатель на панель. ЛКМ по показателю на панели открывает подробный монитор.",
     chooseMetrics: "выбрать показатели",
-    leftClickOpen: "ЛКМ: открыть"
+    leftClickOpen: "ЛКМ: открыть",
+    installed: "Установлено",
+    notInstalled: "Не установлено",
+    openGithub: "GitHub",
+    dependencyHint: "Статусы определяются локально. GitHub открывает официальную страницу проекта; автоматическая установка не выполняется.",
+    dependencyLinux: "Интерфейсы ядра для системных датчиков",
+    dependencyBtop: "Подробный монитор системы, открываемый из показателей CPU",
+    dependencyZenpower: "Драйвер температуры и потребления процессоров AMD",
+    dependencyK10temp: "Драйвер температуры процессоров AMD",
+    dependencyCoretemp: "Драйвер температуры процессоров Intel",
+    dependencyAmdgpu: "Драйвер датчиков видеокарт AMD",
+    dependencyAmdgpuTop: "Подробный монитор видеокарт AMD",
+    dependencyNvidia: "Драйвер NVIDIA и утилита датчиков nvidia-smi",
+    dependencyNvtop: "Подробный монитор видеокарт NVIDIA"
   }
 }
 
@@ -46,6 +74,7 @@ function textFor(language, key) {
 
 var MAX_SNAPSHOT_CHARS = 8192
 var MAX_METRICS = 16
+var MAX_DEPENDENCIES = 8
 var metricKinds = {
   "cpu.load": "system",
   "cpu.temp": "system",
@@ -65,6 +94,54 @@ var metricKinds = {
   "gpu.vram": "gpu"
 }
 
+var dependencyCatalog = {
+  "linux.hwmon": {
+    name: "Linux hwmon / sysfs",
+    descriptionKey: "dependencyLinux",
+    url: "https://github.com/torvalds/linux"
+  },
+  "btop": {
+    name: "btop",
+    descriptionKey: "dependencyBtop",
+    url: "https://github.com/aristocratos/btop"
+  },
+  "zenpower": {
+    name: "zenpower",
+    descriptionKey: "dependencyZenpower",
+    url: "https://github.com/AliEmreSenel/zenpower3"
+  },
+  "k10temp": {
+    name: "k10temp",
+    descriptionKey: "dependencyK10temp",
+    url: "https://github.com/torvalds/linux/blob/master/drivers/hwmon/k10temp.c"
+  },
+  "coretemp": {
+    name: "coretemp",
+    descriptionKey: "dependencyCoretemp",
+    url: "https://github.com/torvalds/linux/blob/master/drivers/hwmon/coretemp.c"
+  },
+  "amdgpu": {
+    name: "amdgpu",
+    descriptionKey: "dependencyAmdgpu",
+    url: "https://github.com/torvalds/linux/tree/master/drivers/gpu/drm/amd"
+  },
+  "amdgpu_top": {
+    name: "amdgpu_top",
+    descriptionKey: "dependencyAmdgpuTop",
+    url: "https://github.com/Umio-Yasuno/amdgpu_top"
+  },
+  "nvidia": {
+    name: "NVIDIA / nvidia-smi",
+    descriptionKey: "dependencyNvidia",
+    url: "https://github.com/NVIDIA/open-gpu-kernel-modules"
+  },
+  "nvtop": {
+    name: "nvtop",
+    descriptionKey: "dependencyNvtop",
+    url: "https://github.com/Syllo/nvtop"
+  }
+}
+
 function sanitizeText(value, maxLength) {
   var limit = Math.max(0, Math.min(256, Number(maxLength) || 0))
   if (limit === 0) return ""
@@ -78,6 +155,11 @@ function sanitizeText(value, maxLength) {
 
 function expectedMetricKind(id) {
   return Object.prototype.hasOwnProperty.call(metricKinds, id) ? metricKinds[id] : ""
+}
+
+function dependencyInfo(id) {
+  var key = sanitizeText(id, 32)
+  return Object.prototype.hasOwnProperty.call(dependencyCatalog, key) ? dependencyCatalog[key] : null
 }
 
 function metricValueTemplate(id) {
@@ -117,7 +199,8 @@ function safeSnapshot(raw) {
     gpuVendor: "none",
     gpuTool: "",
     gpuName: "",
-    metrics: []
+    metrics: [],
+    dependencies: []
   }
 
   try {
@@ -134,7 +217,24 @@ function safeSnapshot(raw) {
       gpuVendor: vendor,
       gpuTool: vendor === "amd" ? "amdgpu_top" : (vendor === "nvidia" ? "nvtop" : ""),
       gpuName: sanitizeText(parsed.gpuName, 64),
-      metrics: []
+      metrics: [],
+      dependencies: []
+    }
+    if (Array.isArray(parsed.dependencies)) {
+      var seenDependencies = {}
+      for (var dependencyIndex = 0;
+           dependencyIndex < parsed.dependencies.length && result.dependencies.length < MAX_DEPENDENCIES;
+           dependencyIndex++) {
+        var dependency = parsed.dependencies[dependencyIndex]
+        if (!dependency || typeof dependency !== "object" || Array.isArray(dependency)) continue
+        var dependencyId = sanitizeText(dependency.id, 32)
+        if (!dependencyInfo(dependencyId) || seenDependencies[dependencyId]) continue
+        seenDependencies[dependencyId] = true
+        result.dependencies.push({
+          id: dependencyId,
+          installed: dependency.installed === true
+        })
+      }
     }
     if (!Array.isArray(parsed.metrics)) return result
 
@@ -224,6 +324,7 @@ if (typeof module !== "undefined") {
     textFor: textFor,
     sanitizeText: sanitizeText,
     expectedMetricKind: expectedMetricKind,
+    dependencyInfo: dependencyInfo,
     metricValueTemplate: metricValueTemplate,
     safeSnapshot: safeSnapshot,
     normalizeEnabled: normalizeEnabled,

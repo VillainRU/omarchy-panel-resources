@@ -12,7 +12,10 @@ export LC_ALL=C
 
 declare -a metrics=()
 declare -A metric_ids=()
+declare -a dependencies=()
+declare -A dependency_ids=()
 MAX_METRICS=16
+MAX_DEPENDENCIES=8
 MAX_OUTPUT_BYTES=8192
 
 if [[ $language == ru ]]; then
@@ -188,6 +191,21 @@ add_metric() {
     "$(json_escape "$detail")")")
 }
 
+add_dependency() {
+  local id=$1 installed=$2
+  case "$id" in
+    linux.hwmon|btop|zenpower|k10temp|coretemp|amdgpu|amdgpu_top|nvidia|nvtop) ;;
+    *) return 0 ;;
+  esac
+  [[ $installed == true || $installed == false ]] || return 0
+  [[ -z ${dependency_ids[$id]+x} ]] || return 0
+  (( ${#dependencies[@]} < MAX_DEPENDENCIES )) || return 0
+
+  dependency_ids[$id]=1
+  dependencies+=("$(printf '{\"id\":\"%s\",\"installed\":%s}' \
+    "$(json_escape "$id")" "$installed")")
+}
+
 read_cpu_totals() {
   local cpu user nice system idle iowait irq softirq steal guest guest_nice
   read -r cpu user nice system idle iowait irq softirq steal guest guest_nice < /proc/stat
@@ -209,10 +227,16 @@ fi
 best_cpu_temp=""
 best_cpu_label=""
 best_cpu_priority=999
+cpu_sensor_dependency=""
 shopt -s nullglob
 for hwmon in /sys/class/hwmon/hwmon*; do
   hwmon_name=""
   [[ -r "$hwmon/name" ]] && IFS= read -r hwmon_name < "$hwmon/name"
+  case "$hwmon_name" in
+    zenpower) cpu_sensor_dependency="zenpower" ;;
+    k10temp) [[ $cpu_sensor_dependency != zenpower ]] && cpu_sensor_dependency="k10temp" ;;
+    coretemp) [[ -z $cpu_sensor_dependency ]] && cpu_sensor_dependency="coretemp" ;;
+  esac
   for input in "$hwmon"/temp*_input; do
     raw_temp=$(read_number "$input") || continue
     (( raw_temp > 0 )) || continue
@@ -432,18 +456,51 @@ elif [[ $gpu_vendor == nvidia ]] && command -v nvidia-smi >/dev/null 2>&1; then
   fi
 fi
 
+[[ -d /sys/class/hwmon ]] && add_dependency "linux.hwmon" true || add_dependency "linux.hwmon" false
+command -v btop >/dev/null 2>&1 && add_dependency "btop" true || add_dependency "btop" false
+
+if [[ -n $cpu_sensor_dependency ]]; then
+  add_dependency "$cpu_sensor_dependency" true
+fi
+if grep -qm1 '^vendor_id[[:space:]]*: AuthenticAMD' /proc/cpuinfo 2>/dev/null \
+    && [[ $cpu_sensor_dependency != zenpower && -z ${cpu_power_uw:-} ]]; then
+  add_dependency "zenpower" false
+elif grep -qm1 '^vendor_id[[:space:]]*: GenuineIntel' /proc/cpuinfo 2>/dev/null \
+    && [[ $cpu_sensor_dependency != coretemp ]]; then
+  add_dependency "coretemp" false
+fi
+
+if [[ $gpu_vendor == amd ]]; then
+  [[ -d /sys/module/amdgpu ]] && add_dependency "amdgpu" true || add_dependency "amdgpu" false
+  command -v amdgpu_top >/dev/null 2>&1 && add_dependency "amdgpu_top" true || add_dependency "amdgpu_top" false
+elif [[ $gpu_vendor == nvidia ]]; then
+  if [[ -d /sys/module/nvidia ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    add_dependency "nvidia" true
+  else
+    add_dependency "nvidia" false
+  fi
+  command -v nvtop >/dev/null 2>&1 && add_dependency "nvtop" true || add_dependency "nvtop" false
+fi
+
 metrics_json=""
 if (( ${#metrics[@]} > 0 )); then
   printf -v metrics_json '%s,' "${metrics[@]}"
   metrics_json=${metrics_json%,}
 fi
 
-payload=$(printf '{"version":1,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","metrics":[%s]}' \
+dependencies_json=""
+if (( ${#dependencies[@]} > 0 )); then
+  printf -v dependencies_json '%s,' "${dependencies[@]}"
+  dependencies_json=${dependencies_json%,}
+fi
+
+payload=$(printf '{"version":1,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","metrics":[%s],"dependencies":[%s]}' \
   "$(json_escape "$language")" \
   "$(json_escape "$gpu_vendor")" \
   "$(json_escape "$gpu_tool")" \
   "$(json_escape "$gpu_name")" \
-  "$metrics_json")
+  "$metrics_json" \
+  "$dependencies_json")
 if (( ${#payload} > MAX_OUTPUT_BYTES )); then
   printf 'collector output exceeds %d bytes\n' "$MAX_OUTPUT_BYTES" >&2
   exit 70
