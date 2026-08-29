@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# Launch one monitor window per TUI. Reuse it while it exists, and treat it
+# like a transient panel by closing it as soon as focus moves elsewhere.
+
+set -u
+
+if (($# == 0)); then
+  echo "Usage: panel-resources-popup-tui <command> [args...]" >&2
+  exit 2
+fi
+
+app_id="org.omarchy.$(basename "$1")"
+
+window_address() {
+  hyprctl clients -j 2>/dev/null \
+    | jq -r --arg app_id "$app_id" '.[] | select(.class == $app_id) | .address' \
+    | head -n1
+}
+
+active_address() {
+  hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty'
+}
+
+address=$(window_address)
+
+if [[ -n $address ]]; then
+  hyprctl dispatch focuswindow "address:$address" >/dev/null 2>&1
+else
+  omarchy-launch-tui --app-id="$app_id" "$@" >/dev/null 2>&1 &
+
+  # Give the terminal time to register its Wayland window.
+  for _ in {1..50}; do
+    sleep 0.1
+    address=$(window_address)
+    [[ -n $address ]] && break
+  done
+fi
+
+[[ -n $address ]] || exit 1
+
+# Do not mistake terminal startup or the originating bar click for a genuine
+# focus loss. Start watching only after this window has actually held focus.
+for _ in {1..30}; do
+  [[ $(active_address) == "$address" ]] && break
+  sleep 0.1
+done
+
+[[ $(active_address) == "$address" ]] || exit 0
+
+while hyprctl clients -j 2>/dev/null \
+  | jq -e --arg address "$address" '.[] | select(.address == $address)' >/dev/null; do
+  if [[ $(active_address) != "$address" ]]; then
+    hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1
+    exit 0
+  fi
+  sleep 0.15
+done
