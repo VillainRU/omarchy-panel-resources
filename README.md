@@ -24,7 +24,7 @@ omarchy plugin remove io.github.villainru.panel-resources
 
 ## Metrics
 
-- System: CPU load, CPU temperature, average CPU frequency, RAM, swap and root disk usage.
+- System: CPU load, CPU temperature, CPU package power, average CPU frequency, RAM, swap and root disk usage.
 - AMD: GPU load, edge temperature, hotspot (`junction`), memory temperature, VRAM, power, fan and clock.
 - NVIDIA: GPU load, temperature, VRAM, power, fan and clock.
 
@@ -51,6 +51,7 @@ The Panel Resources icon opens the metric selector. Right-clicking it refreshes 
 - Omarchy with the QuickShell plugin system.
 - Standard system tools: Bash, `awk`, `df`, `realpath` and access to Linux `/proc` and `/sys` metrics.
 - `btop` for the detailed system monitor opened from CPU, memory and disk metrics.
+- CPU power uses unprivileged hwmon package-power data. On supported AMD systems, `zenpower` combines the SVI2 Core and SoC rails; other explicit CPU/package, socket or PPT hwmon channels are used as a fallback.
 - AMD: `amdgpu_top` for the detailed GPU monitor. Metrics are read from the `amdgpu` DRM and hwmon interfaces.
 - NVIDIA: `nvidia-smi` for metrics and `nvtop` for the detailed GPU monitor.
 

@@ -13,7 +13,7 @@ jq -e '
   (.metrics | length) <= 16
   and all(.metrics[];
     (.id | IN(
-      "cpu.load", "cpu.temp", "cpu.frequency", "memory.ram", "memory.swap", "disk.root",
+      "cpu.load", "cpu.temp", "cpu.power", "cpu.frequency", "memory.ram", "memory.swap", "disk.root",
       "gpu.load", "gpu.temp", "gpu.edge", "gpu.hotspot", "gpu.memory_temp",
       "gpu.power", "gpu.fan", "gpu.frequency", "gpu.vram"
     ))

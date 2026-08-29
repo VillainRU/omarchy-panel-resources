@@ -49,6 +49,7 @@ var MAX_METRICS = 16
 var metricKinds = {
   "cpu.load": "system",
   "cpu.temp": "system",
+  "cpu.power": "system",
   "cpu.frequency": "system",
   "memory.ram": "system",
   "memory.swap": "system",
@@ -96,6 +97,8 @@ function metricValueTemplate(id) {
       return "100°C"
     case "cpu.frequency":
       return "10.0GHz"
+    case "cpu.power":
+      return "999W"
     case "gpu.power":
       return "9999W"
     case "gpu.fan":

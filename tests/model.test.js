@@ -14,6 +14,7 @@ assert.equal(Model.textFor("en", "showOnBar"), "Show on bar")
 assert.equal(Model.metricValueTemplate("cpu.load"), "100%")
 assert.equal(Model.metricValueTemplate("gpu.hotspot"), "100°C")
 assert.equal(Model.metricValueTemplate("gpu.fan"), "9999RPM")
+assert.equal(Model.metricValueTemplate("cpu.power"), "999W")
 
 const snapshot = Model.safeSnapshot(JSON.stringify({
   language: "ru_RU",
@@ -21,6 +22,7 @@ const snapshot = Model.safeSnapshot(JSON.stringify({
   gpuTool: "amdgpu_top",
   metrics: [
     { id: "cpu.load", kind: "system", label: "CPU load", shortLabel: "CPU", value: "8%", detail: "All cores" },
+    { id: "cpu.power", kind: "system", label: "CPU power", shortLabel: "CPU W", value: "40W", detail: "zenpower" },
     { id: "gpu.hotspot", kind: "gpu", label: "GPU Hotspot", shortLabel: "HOT", value: "36°C", detail: "junction" },
     { id: "gpu.power", kind: "gpu", label: "GPU power", shortLabel: "GPU W", value: "41W", detail: "PPT" }
   ]
@@ -36,6 +38,7 @@ assert.equal(Model.isEnabled({ "gpu.power": true }, "gpu.power"), true)
 assert.equal(Model.isEnabled({ "cpu.load": false }, "cpu.load"), false)
 assert.equal(Model.visibleMetrics(snapshot.metrics, {}).length, 2)
 assert.equal(Model.metricById(snapshot.metrics, "gpu.hotspot").kind, "gpu")
+assert.equal(Model.metricById(snapshot.metrics, "cpu.power").kind, "system")
 
 const hostileMetrics = []
 for (let i = 0; i < 4; i++) {

@@ -19,6 +19,7 @@ if [[ $language == ru ]]; then
   label_cpu_load="Загрузка процессора"
   detail_cpu_load="Суммарная загрузка всех ядер"
   label_cpu_temp="Температура процессора"
+  label_cpu_power="Потребление процессора"
   label_cpu_frequency="Средняя частота CPU"
   detail_cpu_frequency="Среднее по активным политикам cpufreq"
   label_memory="Оперативная память"
@@ -36,6 +37,7 @@ else
   label_cpu_load="CPU load"
   detail_cpu_load="Combined load across all cores"
   label_cpu_temp="CPU temperature"
+  label_cpu_power="CPU power"
   label_cpu_frequency="Average CPU frequency"
   detail_cpu_frequency="Average across active cpufreq policies"
   label_memory="Memory"
@@ -96,11 +98,73 @@ format_gib() {
   awk -v bytes="$1" 'BEGIN { printf "%.1f GiB", bytes / 1073741824 }'
 }
 
+detect_cpu_power() {
+  cpu_power_uw=""
+  cpu_power_detail=""
+  local hwmon hwmon_name label_path sensor_label lower_label value_path raw_power
+  local core_power="" soc_power=""
+
+  # zenpower exposes the CPU core and SoC rails separately. Their sum is the
+  # closest unprivileged package-power reading on supported AMD systems.
+  for hwmon in /sys/class/hwmon/hwmon*; do
+    hwmon_name=""
+    [[ -r "$hwmon/name" ]] && IFS= read -r hwmon_name < "$hwmon/name"
+    [[ $hwmon_name == zenpower ]] || continue
+    for label_path in "$hwmon"/power*_label; do
+      [[ -r $label_path ]] || continue
+      IFS= read -r sensor_label < "$label_path"
+      value_path=${label_path%_label}_input
+      raw_power=$(read_number "$value_path") || continue
+      [[ $raw_power =~ ^[0-9]+$ ]] || continue
+      lower_label=${sensor_label,,}
+      case "$lower_label" in
+        svi2_p_core) core_power=$raw_power ;;
+        svi2_p_soc) soc_power=$raw_power ;;
+      esac
+    done
+    if [[ -n $core_power ]]; then
+      cpu_power_uw=$core_power
+      cpu_power_detail="zenpower · SVI2 Core"
+      if [[ -n $soc_power ]]; then
+        cpu_power_uw=$((core_power + soc_power))
+        cpu_power_detail="zenpower · SVI2 Core + SoC"
+      fi
+      return 0
+    fi
+  done
+
+  # Generic hwmon fallback for drivers that expose an explicit CPU/package,
+  # socket or PPT power channel in microwatts.
+  for hwmon in /sys/class/hwmon/hwmon*; do
+    hwmon_name=""
+    [[ -r "$hwmon/name" ]] && IFS= read -r hwmon_name < "$hwmon/name"
+    [[ $hwmon_name == amdgpu ]] && continue
+    for label_path in "$hwmon"/power*_label; do
+      [[ -r $label_path ]] || continue
+      IFS= read -r sensor_label < "$label_path"
+      lower_label=${sensor_label,,}
+      case "$lower_label" in
+        *package*|cpu*|*socket*|ppt*) ;;
+        *) continue ;;
+      esac
+      value_path=${label_path%_label}_average
+      [[ -r $value_path ]] || value_path=${label_path%_label}_input
+      raw_power=$(read_number "$value_path") || continue
+      [[ $raw_power =~ ^[0-9]+$ ]] || continue
+      (( raw_power > 0 )) || continue
+      cpu_power_uw=$raw_power
+      cpu_power_detail="$hwmon_name · $sensor_label"
+      return 0
+    done
+  done
+  return 1
+}
+
 add_metric() {
   local id=$1 kind=$2 label=$3 short_label=$4 value=$5 detail=${6-}
   local expected_kind
   case "$id" in
-    cpu.load|cpu.temp|cpu.frequency|memory.ram|memory.swap|disk.root) expected_kind="system" ;;
+    cpu.load|cpu.temp|cpu.power|cpu.frequency|memory.ram|memory.swap|disk.root) expected_kind="system" ;;
     gpu.load|gpu.temp|gpu.edge|gpu.hotspot|gpu.memory_temp|gpu.power|gpu.fan|gpu.frequency|gpu.vram) expected_kind="gpu" ;;
     *) return 0 ;;
   esac
@@ -177,6 +241,11 @@ done
 if [[ -n $best_cpu_temp && $best_cpu_priority -lt 999 ]]; then
   cpu_temp=$((best_cpu_temp / 1000))
   add_metric "cpu.temp" "system" "$label_cpu_temp" "CPU°" "${cpu_temp}°C" "${best_cpu_label}"
+fi
+
+if detect_cpu_power && [[ -n $cpu_power_uw ]]; then
+  cpu_power_value=$(awk -v raw="$cpu_power_uw" 'BEGIN { printf "%.0fW", raw / 1000000 }')
+  add_metric "cpu.power" "system" "$label_cpu_power" "CPU W" "$cpu_power_value" "$cpu_power_detail"
 fi
 
 freq_sum=0
