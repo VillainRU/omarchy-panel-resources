@@ -42,7 +42,7 @@ The collector reads the same kernel interfaces used by system monitors instead o
 - AMD metrics: `amdgpu` DRM/sysfs and labeled `hwmon` sensors;
 - NVIDIA metrics: NVML values exposed through `nvidia-smi` (the same backend family used by `nvtop`).
 
-Left-clicking a system metric on the bar opens `btop`. Left-clicking a GPU metric opens `amdgpu_top` for AMD or `nvtop` for NVIDIA through `omarchy-launch-tui`.
+Left-clicking a system metric on the bar opens `btop`. Left-clicking a GPU metric opens `amdgpu_top` for AMD or `nvtop` for NVIDIA. Each monitor uses a stable terminal app ID, so another click focuses its existing window instead of opening a duplicate. Monitor windows are transient and close when they lose focus.
 
 The Panel Resources icon opens the metric selector. Right-clicking it refreshes immediately.
 

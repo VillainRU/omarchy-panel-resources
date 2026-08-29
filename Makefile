@@ -3,6 +3,7 @@
 check:
 	jq -e . manifest.json >/dev/null
 	bash -n bin/panel-resources-collect
+	bash -n bin/panel-resources-popup-tui
 	node tests/model.test.js
 	bash tests/security.test.sh
 	PANEL_RESOURCES_LANG=en bin/panel-resources-collect | jq -e '.language == "en" and ([.metrics[].label] | index("CPU load") != null)' >/dev/null

@@ -41,6 +41,8 @@ Panel {
   readonly property int refreshIntervalMs: Math.max(1, Number(setting("refreshIntervalSec", 2)) || 2) * 1000
   readonly property string collectorPath: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/" + moduleName + "/bin/panel-resources-collect"
+  readonly property string monitorLauncherPath: Quickshell.env("HOME")
+    + "/.config/omarchy/plugins/" + moduleName + "/bin/panel-resources-popup-tui"
   readonly property int collectorOutputLimit: 8192
   readonly property int collectorErrorLimit: 512
 
@@ -144,7 +146,7 @@ Panel {
     if (!metric) return
     var command = metric.kind === "gpu" ? snapshot.gpuTool : "btop"
     if (!command) return
-    Quickshell.execDetached(["omarchy-launch-tui", command])
+    Quickshell.execDetached([monitorLauncherPath, command])
   }
 
   function gpuSectionTitle() {
