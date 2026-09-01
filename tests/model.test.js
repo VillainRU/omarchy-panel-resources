@@ -17,6 +17,10 @@ assert.equal(Model.metricValueTemplate("cpu.load"), "100%")
 assert.equal(Model.metricValueTemplate("gpu.hotspot"), "100°C")
 assert.equal(Model.metricValueTemplate("gpu.fan"), "9999RPM")
 assert.equal(Model.metricValueTemplate("cpu.power"), "999W")
+assert.equal(Model.normalizeRefreshIntervalMs(undefined), 2000)
+assert.equal(Model.normalizeRefreshIntervalMs(0), 2000)
+assert.equal(Model.normalizeRefreshIntervalMs("10"), 10000)
+assert.equal(Model.normalizeRefreshIntervalMs(60), 30000)
 
 const snapshot = Model.safeSnapshot(JSON.stringify({
   language: "ru_RU",

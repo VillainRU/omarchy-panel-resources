@@ -43,10 +43,16 @@ elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
 [[ $timeout_status == 124 || $timeout_status == 137 ]]
 (( elapsed_ms < 2000 ))
 
-! rg -q 'StdioCollector' "$repo_dir/Panel.qml"
-rg -q 'command: \["/usr/bin/timeout", "--signal=TERM", "--kill-after=0.5s", "2s"' "$repo_dir/Panel.qml"
-rg -q 'stdout: SplitParser' "$repo_dir/Panel.qml"
-rg -q 'stderr: SplitParser' "$repo_dir/Panel.qml"
+! rg -q 'StdioCollector' "$repo_dir/Service.qml"
+rg -q 'command: \["/usr/bin/timeout", "--signal=TERM", "--kill-after=0.5s", "2s"' "$repo_dir/Service.qml"
+rg -q 'stdout: SplitParser' "$repo_dir/Service.qml"
+rg -q 'stderr: SplitParser' "$repo_dir/Service.qml"
+! rg -q 'Process|collectorProc|collectorDeadline' "$repo_dir/Panel.qml"
+rg -q 'serviceFor\(moduleName\)' "$repo_dir/BarWidget.qml"
+jq -e '
+  (.kinds | index("service")) != null
+  and .entryPoints.service == "Service.qml"
+' "$repo_dir/manifest.json" >/dev/null
 rg -q 'textFormat: Text.PlainText' "$repo_dir/BarWidget.qml"
 rg -q 'textFormat: Text.PlainText' "$repo_dir/Panel.qml"
 rg -q 'omarchy-launch-browser' "$repo_dir/Panel.qml"

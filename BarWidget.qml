@@ -7,6 +7,9 @@ BarWidget {
   id: root
   moduleName: "io.github.villainru.panel-resources"
 
+  readonly property var collectorService: bar && bar.shell
+    && typeof bar.shell.serviceFor === "function"
+    ? bar.shell.serviceFor(moduleName) : null
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property var visibleMetrics: panelLoader.item ? panelLoader.item.visibleBarMetrics : []
@@ -15,6 +18,11 @@ BarWidget {
     : Model.languageFromLocale(Qt.locale().name)
 
   function textFor(key) { return Model.textFor(language, key) }
+
+  function configureService() {
+    if (collectorService && typeof collectorService.configure === "function")
+      collectorService.configure(settings || ({}))
+  }
 
   function metricTooltip(metric) {
     var label = Model.sanitizeText(metric.label, 64)
@@ -34,6 +42,7 @@ BarWidget {
     if ("settings" in target) target.settings = root.settings
     if ("anchorItem" in target) target.anchorItem = menuButton
     if ("hostWidget" in target) target.hostWidget = root
+    if ("service" in target) target.service = root.collectorService
   }
 
   function open() { if (panelLoader.item) panelLoader.item.open() }
@@ -45,8 +54,20 @@ BarWidget {
   implicitWidth: metricsRow.implicitWidth
   implicitHeight: metricsRow.implicitHeight
 
-  onBarChanged: injectPanel()
-  onSettingsChanged: injectPanel()
+  onBarChanged: {
+    injectPanel()
+    configureService()
+  }
+  onSettingsChanged: {
+    injectPanel()
+    configureService()
+  }
+  onCollectorServiceChanged: {
+    injectPanel()
+    configureService()
+  }
+
+  Component.onCompleted: configureService()
 
   Loader {
     id: panelLoader

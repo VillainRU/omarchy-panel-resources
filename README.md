@@ -42,6 +42,8 @@ The collector reads the same kernel interfaces used by system monitors instead o
 - AMD metrics: `amdgpu` DRM/sysfs and labeled `hwmon` sensors;
 - NVIDIA metrics: NVML values exposed through `nvidia-smi` (the same backend family used by `nvtop`).
 
+One shared plugin service owns the refresh timer and collector process. Omarchy creates a bar-widget instance for each monitor, but every instance observes the same validated snapshot, so adding monitors does not multiply telemetry processes.
+
 Left-clicking a system metric on the bar opens `btop`. Left-clicking a GPU metric opens `amdgpu_top` for AMD or `nvtop` for NVIDIA through `omarchy-launch-tui`.
 
 The Panel Resources icon opens the popup. Right-clicking it refreshes immediately.

@@ -192,6 +192,12 @@ function metricValueTemplate(id) {
   }
 }
 
+function normalizeRefreshIntervalMs(value) {
+  var seconds = Number(value)
+  if (!isFinite(seconds) || seconds < 1) seconds = 2
+  return Math.min(30, seconds) * 1000
+}
+
 function safeSnapshot(raw) {
   var fallback = {
     version: 1,
@@ -326,6 +332,7 @@ if (typeof module !== "undefined") {
     expectedMetricKind: expectedMetricKind,
     dependencyInfo: dependencyInfo,
     metricValueTemplate: metricValueTemplate,
+    normalizeRefreshIntervalMs: normalizeRefreshIntervalMs,
     safeSnapshot: safeSnapshot,
     normalizeEnabled: normalizeEnabled,
     defaultEnabled: defaultEnabled,
