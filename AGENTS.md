@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository contains one Omarchy QuickShell bar plugin. `Service.qml` owns the single shared refresh timer, collector process, and snapshot. `BarWidget.qml` renders compact bar metrics, while `Panel.qml` provides the popup and settings UI. Shared parsing, localization, allowlists, and display helpers live in `Model.js`. Hardware collection is isolated in the executable `bin/panel-resources-collect`. Plugin metadata belongs in `manifest.json`; user-facing behavior and dependencies are documented in `README.md`. `preview.png` is the marketplace image. Tests live under `tests/`: JavaScript model tests in `model.test.js` and shell/security boundary checks in `security.test.sh`.
+This repository contains one Omarchy QuickShell bar plugin. `Service.qml` owns the single shared persistent collector and merged snapshot. `BarWidget.qml` renders compact bar metrics, while `Panel.qml` provides the popup and settings UI. Shared parsing, localization, allowlists, snapshot merging, and display helpers live in `Model.js`. Hardware collection is isolated in the executable `bin/panel-resources-collect`; its watch mode caches hardware discovery and samples only enabled metrics after the initial inventory. Plugin metadata belongs in `manifest.json`; user-facing behavior and dependencies are documented in `README.md`. `preview.png` is the marketplace image. Tests live under `tests/`: JavaScript model tests in `model.test.js` and shell/security boundary checks in `security.test.sh`.
 
 ## Build, Test, and Development Commands
 

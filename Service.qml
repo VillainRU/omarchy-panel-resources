@@ -10,6 +10,7 @@ Item {
   property var manifest: null
   property var snapshot: ({
     version: 1,
+    complete: true,
     language: Model.languageFromLocale(Qt.locale().name),
     gpuVendor: "none",
     gpuTool: "",
@@ -19,11 +20,11 @@ Item {
   })
   property string errorKey: ""
   property int refreshIntervalMs: 2000
-  property string collectorOutputText: ""
+  property string enabledMetricCsv: Model.enabledMetricCsv(null)
   property string collectorErrorText: ""
-  property int collectorOutputLines: 0
-  property bool collectorOutputRejected: false
-  property bool collectorTimedOut: false
+  property bool collectorWanted: true
+  property bool collectorReceivedSnapshot: false
+  property bool collectorRestarting: false
 
   readonly property string sourceDir: manifest && manifest.__sourceDir
     ? String(manifest.__sourceDir)
@@ -31,32 +32,49 @@ Item {
   readonly property string collectorPath: sourceDir + "/bin/panel-resources-collect"
   readonly property int collectorOutputLimit: 8192
   readonly property int collectorErrorLimit: 512
+  readonly property int heartbeatTimeoutMs: Math.max(5000, refreshIntervalMs * 3)
 
   function configure(settings) {
-    refreshIntervalMs = Model.normalizeRefreshIntervalMs(settings && settings.refreshIntervalSec)
+    var nextInterval = Model.normalizeRefreshIntervalMs(settings && settings.refreshIntervalSec)
+    var nextEnabled = Model.enabledMetricCsv(settings && settings.enabledMetrics)
+    if (nextInterval === refreshIntervalMs && nextEnabled === enabledMetricCsv) {
+      ensureCollector()
+      return
+    }
+    refreshIntervalMs = nextInterval
+    enabledMetricCsv = nextEnabled
+    restartCollector()
+  }
+
+  function ensureCollector() {
+    collectorWanted = true
+    if (!collectorProc.running && !restartTimer.running) restartTimer.start()
   }
 
   function refresh() {
-    if (!collectorProc.running) collectorProc.running = true
+    restartCollector()
   }
 
-  function resetCollectorCapture() {
-    collectorOutputText = ""
-    collectorErrorText = ""
-    collectorOutputLines = 0
-    collectorOutputRejected = false
-    collectorTimedOut = false
+  function restartCollector() {
+    collectorWanted = true
+    collectorRestarting = true
+    heartbeat.stop()
+    restartTimer.restart()
+    if (collectorProc.running) collectorProc.running = false
   }
 
   function captureCollectorOutput(line) {
-    collectorOutputLines++
     var value = String(line || "")
-    if (collectorOutputLines !== 1 || value.length > collectorOutputLimit) {
-      collectorOutputRejected = true
-      collectorOutputText = ""
+    if (value.length === 0 || value.length > collectorOutputLimit) {
+      errorKey = "collectionError"
+      restartCollector()
       return
     }
-    collectorOutputText = value
+    var parsed = Model.safeSnapshot(value)
+    snapshot = Model.mergeSnapshot(snapshot, parsed)
+    collectorReceivedSnapshot = true
+    errorKey = !snapshot.metrics || snapshot.metrics.length === 0 ? "sensorsNotFound" : ""
+    heartbeat.restart()
   }
 
   function captureCollectorError(line) {
@@ -67,47 +85,33 @@ Item {
     collectorErrorText = (collectorErrorText + separator + value).slice(0, collectorErrorLimit)
   }
 
-  function applySnapshot(raw) {
-    var parsed = Model.safeSnapshot(raw)
-    snapshot = parsed
-    errorKey = !parsed.metrics || parsed.metrics.length === 0 ? "sensorsNotFound" : ""
-  }
-
-  function finishCollector(exitCode) {
-    collectorDeadline.stop()
-    if (collectorTimedOut || exitCode === 124 || exitCode === 137) {
-      errorKey = "collectionError"
-      return
-    }
-    if (exitCode === 0 && !collectorOutputRejected && collectorOutputText !== "") {
-      applySnapshot(collectorOutputText)
-      return
-    }
-    errorKey = "collectionError"
-    if (collectorErrorText !== "") console.warn("panel-resources:", collectorErrorText)
-  }
-
   Timer {
-    interval: root.refreshIntervalMs
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.refresh()
-  }
-
-  Timer {
-    id: collectorDeadline
-    interval: 3000
+    id: restartTimer
+    interval: 150
     repeat: false
     onTriggered: {
-      root.collectorTimedOut = true
-      if (collectorProc.running) collectorProc.running = false
+      if (root.collectorWanted && !collectorProc.running) collectorProc.running = true
+    }
+  }
+
+  Timer {
+    id: heartbeat
+    interval: root.heartbeatTimeoutMs
+    repeat: false
+    onTriggered: {
+      root.errorKey = "collectionError"
+      root.restartCollector()
     }
   }
 
   Process {
     id: collectorProc
-    command: ["/usr/bin/timeout", "--signal=TERM", "--kill-after=0.5s", "2s", root.collectorPath]
+    command: [
+      root.collectorPath,
+      "--watch",
+      "--interval-ms", String(root.refreshIntervalMs),
+      "--enabled-metrics", root.enabledMetricCsv
+    ]
 
     stdout: SplitParser {
       splitMarker: "\n"
@@ -120,11 +124,21 @@ Item {
     }
 
     onStarted: {
-      root.resetCollectorCapture()
-      collectorDeadline.restart()
+      root.collectorRestarting = false
+      root.collectorErrorText = ""
+      root.collectorReceivedSnapshot = false
+      heartbeat.restart()
     }
+
     onExited: function(exitCode) {
-      Qt.callLater(function() { root.finishCollector(exitCode) })
+      heartbeat.stop()
+      if (!root.collectorWanted) return
+      if (!root.collectorReceivedSnapshot) root.errorKey = "collectionError"
+      if (!root.collectorRestarting && root.collectorErrorText !== "")
+        console.warn("panel-resources:", root.collectorErrorText)
+      restartTimer.restart()
     }
   }
+
+  Component.onCompleted: ensureCollector()
 }

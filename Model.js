@@ -201,6 +201,7 @@ function normalizeRefreshIntervalMs(value) {
 function safeSnapshot(raw) {
   var fallback = {
     version: 1,
+    complete: true,
     language: "en",
     gpuVendor: "none",
     gpuTool: "",
@@ -219,6 +220,7 @@ function safeSnapshot(raw) {
 
     var result = {
       version: 1,
+      complete: parsed.complete !== false,
       language: normalizeLanguage(parsed.language),
       gpuVendor: vendor,
       gpuTool: vendor === "amd" ? "amdgpu_top" : (vendor === "nvidia" ? "nvtop" : ""),
@@ -272,6 +274,42 @@ function safeSnapshot(raw) {
   } catch (e) {
     return fallback
   }
+}
+
+function enabledMetricCsv(value) {
+  var enabled = normalizeEnabled(value)
+  var result = []
+  for (var id in metricKinds) {
+    if (isEnabled(enabled, id)) result.push(id)
+  }
+  return result.join(",")
+}
+
+function mergeSnapshot(previous, update) {
+  if (!update || update.complete !== false || !previous || !Array.isArray(previous.metrics)) return update
+  var merged = {
+    version: 1,
+    complete: false,
+    language: update.language,
+    gpuVendor: update.gpuVendor,
+    gpuTool: update.gpuTool,
+    gpuName: update.gpuName,
+    metrics: [],
+    dependencies: update.dependencies
+  }
+  var replacements = {}
+  var index
+  for (index = 0; index < update.metrics.length; index++) replacements[update.metrics[index].id] = update.metrics[index]
+  for (index = 0; index < previous.metrics.length; index++) {
+    var oldMetric = previous.metrics[index]
+    merged.metrics.push(replacements[oldMetric.id] || oldMetric)
+    delete replacements[oldMetric.id]
+  }
+  for (index = 0; index < update.metrics.length; index++) {
+    var newMetric = update.metrics[index]
+    if (Object.prototype.hasOwnProperty.call(replacements, newMetric.id)) merged.metrics.push(newMetric)
+  }
+  return merged
 }
 
 function normalizeEnabled(value) {
@@ -335,6 +373,8 @@ if (typeof module !== "undefined") {
     normalizeRefreshIntervalMs: normalizeRefreshIntervalMs,
     safeSnapshot: safeSnapshot,
     normalizeEnabled: normalizeEnabled,
+    enabledMetricCsv: enabledMetricCsv,
+    mergeSnapshot: mergeSnapshot,
     defaultEnabled: defaultEnabled,
     isEnabled: isEnabled,
     metricsForKind: metricsForKind,

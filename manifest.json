@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.villainru.panel-resources",
   "name": "Panel Resources",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "VillainRU",
   "license": "MIT",
   "description": "Selectable CPU, memory, disk and GPU sensors for the Omarchy QuickShell bar.",

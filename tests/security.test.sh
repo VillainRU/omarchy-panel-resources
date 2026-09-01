@@ -10,6 +10,8 @@ snapshot_bytes=$(printf '%s' "$snapshot" | wc -c)
 (( snapshot_bytes <= 8192 ))
 
 jq -e '
+  .complete == true
+  and
   (.metrics | length) <= 16
   and (.dependencies | length) <= 8
   and all(.dependencies[];
@@ -44,9 +46,12 @@ elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
 (( elapsed_ms < 2000 ))
 
 ! rg -q 'StdioCollector' "$repo_dir/Service.qml"
-rg -q 'command: \["/usr/bin/timeout", "--signal=TERM", "--kill-after=0.5s", "2s"' "$repo_dir/Service.qml"
+rg -q '"--watch"' "$repo_dir/Service.qml"
+rg -q 'heartbeatTimeoutMs' "$repo_dir/Service.qml"
 rg -q 'stdout: SplitParser' "$repo_dir/Service.qml"
 rg -q 'stderr: SplitParser' "$repo_dir/Service.qml"
+! rg -q 'sleep 0\.12' "$collector"
+rg -q -- '--loop-ms=' "$collector"
 ! rg -q 'Process|collectorProc|collectorDeadline' "$repo_dir/Panel.qml"
 rg -q 'serviceFor\(moduleName\)' "$repo_dir/BarWidget.qml"
 jq -e '
@@ -57,5 +62,18 @@ rg -q 'textFormat: Text.PlainText' "$repo_dir/BarWidget.qml"
 rg -q 'textFormat: Text.PlainText' "$repo_dir/Panel.qml"
 rg -q 'omarchy-launch-browser' "$repo_dir/Panel.qml"
 ! rg -q 'dependency\.url|modelData\.url' "$repo_dir/Panel.qml"
+
+set +e
+watch_output=$(/usr/bin/timeout --signal=TERM --kill-after=0.5s 2.5s \
+  "$collector" --watch --interval-ms 1000 --enabled-metrics cpu.load,cpu.temp 2>/dev/null)
+watch_status=$?
+set -e
+[[ $watch_status == 124 || $watch_status == 137 ]]
+(( $(wc -l <<< "$watch_output") >= 2 ))
+jq -s -e '
+  .[0].complete == true
+  and .[1].complete == false
+  and all(.[1].metrics[]; .id == "cpu.load" or .id == "cpu.temp")
+' >/dev/null <<< "$watch_output"
 
 printf 'Security boundary tests passed\n'

@@ -43,7 +43,6 @@ Panel {
 
   function open() {
     controller.show()
-    refresh()
   }
 
   function close() { controller.hide() }

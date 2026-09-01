@@ -42,7 +42,9 @@ The collector reads the same kernel interfaces used by system monitors instead o
 - AMD metrics: `amdgpu` DRM/sysfs and labeled `hwmon` sensors;
 - NVIDIA metrics: NVML values exposed through `nvidia-smi` (the same backend family used by `nvtop`).
 
-One shared plugin service owns the refresh timer and collector process. Omarchy creates a bar-widget instance for each monitor, but every instance observes the same validated snapshot, so adding monitors does not multiply telemetry processes.
+One shared plugin service owns a persistent collector process. Omarchy creates a bar-widget instance for each monitor, but every instance observes the same validated snapshot, so adding monitors does not multiply telemetry processes. Hardware paths and dependency availability are detected once at collector startup, then rechecked after a read failure, a manual refresh, or ten minutes. After the initial complete snapshot, only enabled metrics are sampled.
+
+CPU load is calculated between consecutive snapshots without an extra sampling delay. NVIDIA telemetry uses one persistent `nvidia-smi --loop-ms` query instead of launching a new utility process on every refresh.
 
 Left-clicking a system metric on the bar opens `btop`. Left-clicking a GPU metric opens `amdgpu_top` for AMD or `nvtop` for NVIDIA through `omarchy-launch-tui`.
 
@@ -59,9 +61,9 @@ The **Dependencies** tab reports the locally detected monitoring utilities and k
 - AMD: `amdgpu_top` for the detailed GPU monitor. Metrics are read from the `amdgpu` DRM and hwmon interfaces.
 - NVIDIA: `nvidia-smi` for metrics and `nvtop` for the detailed GPU monitor.
 
-The plugin does not require elevated privileges, network access, a background service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
+The plugin does not require elevated privileges, network access, a system service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
 
-Telemetry collection is bounded by a two-second process deadline and an 8 KiB producer/QML payload ceiling. Only 16 allowlisted metric IDs and eight allowlisted dependency IDs are accepted; dependency URLs and display metadata never come from collector output. All displayed telemetry fields have fixed length limits, control characters and rich-text delimiters are removed, and telemetry-backed QML text is rendered as `Text.PlainText`.
+Telemetry collection is supervised by a QML heartbeat and an 8 KiB per-snapshot producer/QML payload ceiling. A stalled or failed collector is restarted automatically. Only 16 allowlisted metric IDs and eight allowlisted dependency IDs are accepted; dependency URLs and display metadata never come from collector output. All displayed telemetry fields have fixed length limits, control characters and rich-text delimiters are removed, and telemetry-backed QML text is rendered as `Text.PlainText`.
 
 ## Validation
 

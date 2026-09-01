@@ -21,6 +21,11 @@ assert.equal(Model.normalizeRefreshIntervalMs(undefined), 2000)
 assert.equal(Model.normalizeRefreshIntervalMs(0), 2000)
 assert.equal(Model.normalizeRefreshIntervalMs("10"), 10000)
 assert.equal(Model.normalizeRefreshIntervalMs(60), 30000)
+assert.equal(
+  Model.enabledMetricCsv({}),
+  "cpu.load,cpu.temp,gpu.load,gpu.temp,gpu.hotspot"
+)
+assert.equal(Model.enabledMetricCsv({ "cpu.load": false, "gpu.power": true }), "cpu.temp,gpu.load,gpu.temp,gpu.hotspot,gpu.power")
 
 const snapshot = Model.safeSnapshot(JSON.stringify({
   language: "ru_RU",
@@ -57,6 +62,21 @@ assert.equal(Model.isEnabled({ "cpu.load": false }, "cpu.load"), false)
 assert.equal(Model.visibleMetrics(snapshot.metrics, {}).length, 2)
 assert.equal(Model.metricById(snapshot.metrics, "gpu.hotspot").kind, "gpu")
 assert.equal(Model.metricById(snapshot.metrics, "cpu.power").kind, "system")
+
+const partial = Model.safeSnapshot(JSON.stringify({
+  complete: false,
+  language: "ru",
+  gpuVendor: "amd",
+  dependencies: [{ id: "btop", installed: true }],
+  metrics: [
+    { id: "cpu.load", kind: "system", label: "CPU load", shortLabel: "CPU", value: "42%", detail: "All cores" }
+  ]
+}))
+const merged = Model.mergeSnapshot(snapshot, partial)
+assert.equal(merged.metrics.length, snapshot.metrics.length)
+assert.equal(Model.metricById(merged.metrics, "cpu.load").value, "42%")
+assert.equal(Model.metricById(merged.metrics, "gpu.hotspot").value, "36°C")
+assert.equal(merged.complete, false)
 
 const hostileMetrics = []
 for (let i = 0; i < 4; i++) {
