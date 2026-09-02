@@ -53,6 +53,7 @@ BarWidget {
 
   implicitWidth: metricsRow.implicitWidth
   implicitHeight: metricsRow.implicitHeight
+  readonly property real openPanelIndicatorWidth: root.implicitWidth
 
   onBarChanged: {
     injectPanel()

@@ -1,6 +1,6 @@
 # Panel Resources
 
-Selectable CPU, memory, disk, and GPU telemetry for the Omarchy QuickShell bar. Panel Resources 0.4.0 is available as a verified marketplace snapshot.
+Selectable CPU, memory, disk, and GPU telemetry for the Omarchy QuickShell bar. Panel Resources is listed in the Omarchy Plugin Marketplace.
 
 [View Panel Resources in the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=io.github.villainru.panel-resources)
 
@@ -40,7 +40,7 @@ omarchy plugin remove io.github.villainru.panel-resources
 
 Only sensors exposed by the current hardware are listed. CPU load and temperature plus GPU load and the primary GPU temperature are enabled by default; every available metric can be toggled from the **System** tab. Settings are stored in the widget's own entry in Omarchy `shell.json`.
 
-The refresh interval is configurable from 1 to 30 seconds and defaults to 2 seconds. The icon opens the popup, right-clicking it forces a hardware rescan, and left-clicking a metric opens its detailed monitor. The UI follows the system message locale: Russian is used for `ru_*`; English is the fallback.
+The refresh interval is configurable from 1 to 30 seconds and defaults to 2 seconds. The icon opens the popup, right-clicking it forces a hardware rescan, and left-clicking a metric opens its detailed monitor. While the popup is open, the active underline spans the complete widget width. The UI follows the system message locale: Russian is used for `ru_*`; English is the fallback.
 
 ## Collection Architecture
 

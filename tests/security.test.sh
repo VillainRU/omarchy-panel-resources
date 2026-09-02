@@ -54,6 +54,7 @@ rg -q 'stderr: SplitParser' "$repo_dir/Service.qml"
 rg -q -- '--loop-ms=' "$collector"
 ! rg -q 'Process|collectorProc|collectorDeadline' "$repo_dir/Panel.qml"
 rg -q 'serviceFor\(moduleName\)' "$repo_dir/BarWidget.qml"
+rg -q 'openPanelIndicatorWidth: root\.implicitWidth' "$repo_dir/BarWidget.qml"
 jq -e '
   (.kinds | index("service")) != null
   and .entryPoints.service == "Service.qml"
