@@ -1,71 +1,78 @@
 # Panel Resources
 
-Omarchy QuickShell bar widget with individually selectable system and GPU metrics.
+Selectable CPU, memory, disk, and GPU telemetry for the Omarchy QuickShell bar. Panel Resources 0.4.0 is available as a verified marketplace snapshot.
+
+[View Panel Resources in the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=io.github.villainru.panel-resources)
 
 ![Panel Resources preview](preview.png)
 
-## Installation
+## Installation and Updates
+
+Install the current upstream version and enable it on the bar:
 
 ```bash
 omarchy plugin add https://github.com/VillainRU/omarchy-panel-resources.git --enable
 ```
 
-If the plugin was added without `--enable`, place it on the right side of the bar:
+If it was installed without `--enable`, place it in the right section:
 
 ```bash
 omarchy plugin enable io.github.villainru.panel-resources right
 ```
 
-## Removal
+Update a Git-managed installation:
+
+```bash
+omarchy plugin update io.github.villainru.panel-resources
+```
+
+If an older manually copied installation reports that it is not a Git checkout, remove it and run the installation command again. Omarchy backs up non-Git plugin directories during removal.
 
 ```bash
 omarchy plugin remove io.github.villainru.panel-resources
 ```
 
-## Metrics
+## Metrics and Settings
 
-- System: CPU load, CPU temperature, CPU package power, average CPU frequency, RAM, swap and root disk usage.
-- AMD: GPU load, edge temperature, hotspot (`junction`), memory temperature, VRAM, power, fan and clock.
-- NVIDIA: GPU load, temperature, VRAM, power, fan and clock.
+- System: CPU load, temperature, package power and average frequency; RAM, swap, and root disk usage.
+- AMD: GPU load, edge, hotspot and memory temperatures; VRAM, power, fan, and clock.
+- NVIDIA: GPU load, temperature, VRAM, power, fan, and clock.
 
-Only metrics exposed by the current hardware are listed. The **System** tab contains the metric switches, which persist directly in Omarchy's `shell.json` entry for the widget.
+Only sensors exposed by the current hardware are listed. CPU load and temperature plus GPU load and the primary GPU temperature are enabled by default; every available metric can be toggled from the **System** tab. Settings are stored in the widget's own entry in Omarchy `shell.json`.
 
-The popup follows the system message locale: Russian is used for `ru_*`, while English is the fallback for every other locale. Technical sensor and module names such as `CPU`, `GPU`, `edge` and `junction` are not translated.
+The refresh interval is configurable from 1 to 30 seconds and defaults to 2 seconds. The icon opens the popup, right-clicking it forces a hardware rescan, and left-clicking a metric opens its detailed monitor. The UI follows the system message locale: Russian is used for `ru_*`; English is the fallback.
 
-Bar metrics use fixed value slots sized for their data type, so the widget does not shift when a reading changes between one, two or three digits. Module padding is kept compact while values remain right-aligned.
+## Collection Architecture
 
-## Data and click behavior
+One shared service owns one persistent collector, regardless of the number of monitors. Hardware paths and dependency availability are detected at startup and rescanned after a read failure, a manual refresh, or ten minutes. The first snapshot inventories all available sensors; later snapshots sample only enabled metrics.
 
-The collector reads the same kernel interfaces used by system monitors instead of scraping their terminal UI:
+CPU load is calculated between consecutive `/proc/stat` readings without an extra sampling delay. AMD telemetry is read directly from DRM/sysfs and labeled `hwmon` sensors. NVIDIA uses one persistent `nvidia-smi --loop-ms` query instead of launching a process for every refresh.
 
-- system metrics: `/proc`, `cpufreq`, `hwmon` and `df`;
-- AMD metrics: `amdgpu` DRM/sysfs and labeled `hwmon` sensors;
-- NVIDIA metrics: NVML values exposed through `nvidia-smi` (the same backend family used by `nvtop`).
+The collector is supervised by a QML heartbeat and restarted if it stalls. Each snapshot is limited to 8 KiB, 16 allowlisted metric IDs, and eight allowlisted dependency IDs. Displayed fields are length-bounded, sanitized, and rendered as plain text.
 
-One shared plugin service owns a persistent collector process. Omarchy creates a bar-widget instance for each monitor, but every instance observes the same validated snapshot, so adding monitors does not multiply telemetry processes. Hardware paths and dependency availability are detected once at collector startup, then rechecked after a read failure, a manual refresh, or ten minutes. After the initial complete snapshot, only enabled metrics are sampled.
+## Requirements and Optional Tools
 
-CPU load is calculated between consecutive snapshots without an extra sampling delay. NVIDIA telemetry uses one persistent `nvidia-smi --loop-ms` query instead of launching a new utility process on every refresh.
+Required runtime interfaces and commands:
 
-Left-clicking a system metric on the bar opens `btop`. Left-clicking a GPU metric opens `amdgpu_top` for AMD or `nvtop` for NVIDIA through `omarchy-launch-tui`.
+- Omarchy with the QuickShell plugin system;
+- Bash, `awk`, `df`, `realpath`, `sleep`, and readable Linux `/proc` and `/sys` interfaces;
+- the installed GPU driver and its unprivileged telemetry interfaces.
 
-The Panel Resources icon opens the popup. Right-clicking it refreshes immediately.
+Optional detailed monitors opened from bar metrics:
 
-## Dependencies
+- `btop` for CPU, memory, and disk metrics;
+- `amdgpu_top` for AMD GPU metrics;
+- `nvtop` for NVIDIA GPU metrics.
 
-The **Dependencies** tab reports the locally detected monitoring utilities and kernel drivers. Green means available and red means unavailable. Its GitHub buttons open only static, allowlisted official project pages through Omarchy's configured browser; the plugin never installs packages or runs instructions from a web page.
+AMD package power can use `zenpower` SVI2 Core and SoC rails or another explicit CPU/package, socket, or PPT `hwmon` channel. NVIDIA telemetry requires `nvidia-smi`.
 
-- Omarchy with the QuickShell plugin system.
-- Standard system tools: Bash, `awk`, `df`, `realpath` and access to Linux `/proc` and `/sys` metrics.
-- `btop` for the detailed system monitor opened from CPU, memory and disk metrics.
-- CPU power uses unprivileged hwmon package-power data. On supported AMD systems, `zenpower` combines the SVI2 Core and SoC rails; other explicit CPU/package, socket or PPT hwmon channels are used as a fallback.
-- AMD: `amdgpu_top` for the detailed GPU monitor. Metrics are read from the `amdgpu` DRM and hwmon interfaces.
-- NVIDIA: `nvidia-smi` for metrics and `nvtop` for the detailed GPU monitor.
+The **Dependencies** tab reports which drivers and optional monitors are available. Its project links are fixed, allowlisted GitHub URLs; the plugin never installs dependencies automatically.
 
-The plugin does not require elevated privileges, network access, a system service or an installer, and it does not overwrite user configuration. Enabling or changing metric switches updates only the widget's own entry in Omarchy `shell.json` through the shell plugin API.
-
-Telemetry collection is supervised by a QML heartbeat and an 8 KiB per-snapshot producer/QML payload ceiling. A stalled or failed collector is restarted automatically. Only 16 allowlisted metric IDs and eight allowlisted dependency IDs are accepted; dependency URLs and display metadata never come from collector output. All displayed telemetry fields have fixed length limits, control characters and rich-text delimiters are removed, and telemetry-backed QML text is rendered as `Text.PlainText`.
+Telemetry collection does not use the network or require elevated privileges. Network access is used only when installing or updating the plugin and when opening an allowlisted dependency project page. The plugin changes only its own widget settings through the Omarchy shell API.
 
 ## Validation
+
+Run the complete repository validation suite before submitting changes:
 
 ```bash
 make check
