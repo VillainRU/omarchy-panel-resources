@@ -55,6 +55,26 @@ BarWidget {
   implicitHeight: metricsRow.implicitHeight
   readonly property real openPanelIndicatorWidth: root.implicitWidth
 
+  Rectangle {
+    id: activePanelIndicator
+
+    readonly property int inset: Style.space(2)
+
+    visible: root.opened
+    opacity: 0.9
+    color: Color.accent
+    radius: Math.min(width, height) / 2
+    width: root.vertical ? Style.space(2) : root.width
+    height: root.vertical ? root.height : Style.space(2)
+    x: root.vertical
+      ? (root.bar && root.bar.position === "left" ? root.width - width - inset : inset)
+      : 0
+    y: root.vertical
+      ? 0
+      : (root.bar && root.bar.position === "top" ? root.height - height - inset : inset)
+    z: 50
+  }
+
   onBarChanged: {
     injectPanel()
     configureService()
