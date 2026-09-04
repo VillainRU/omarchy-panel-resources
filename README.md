@@ -1,79 +1,109 @@
 # Panel Resources
 
-Selectable CPU, memory, disk, and GPU telemetry for the Omarchy QuickShell bar. Panel Resources is listed in the Omarchy Plugin Marketplace.
+Live CPU, memory, disk, AMD, and NVIDIA telemetry for the Omarchy bar — compact, configurable, and private.
 
-[View Panel Resources in the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=io.github.villainru.panel-resources)
+[Omarchy Marketplace](https://plugins.omarchy.org/plugin.html?id=io.github.villainru.panel-resources) · [English](#english) · [Русский](#русский)
 
-![Panel Resources preview](preview.png)
+![Panel Resources panel](preview.png)
 
-## Installation and Updates
+**Version:** Omarchy plugin `0.4.2`
 
-Install the current upstream version and enable it on the bar:
+## English
+
+### Highlights
+
+- Select only the metrics you want on the bar.
+- Monitor CPU load, temperature, power, and frequency; RAM, swap, and root disk usage.
+- Read AMD and NVIDIA load, temperatures, VRAM, power, fan, and clock data when supported by the hardware.
+- Open `btop`, `amdgpu_top`, or `nvtop` by clicking a metric.
+- One persistent collector serves every monitor without network access or elevated privileges.
+
+### Install
 
 ```bash
 omarchy plugin add https://github.com/VillainRU/omarchy-panel-resources.git --enable
 ```
 
-If it was installed without `--enable`, place it in the right section:
+If the widget is not placed automatically, add it to the right section:
 
 ```bash
 omarchy plugin enable io.github.villainru.panel-resources right
 ```
 
-Update a Git-managed installation:
+### Use and configure
+
+Click the chip icon to open the panel; right-click it to rescan hardware. The **System** tab controls visible metrics, while **Dependencies** reports available drivers and optional monitors. The refresh interval is configurable from 1 to 30 seconds and defaults to 2 seconds. The active underline spans the full widget width.
+
+Only sensors exposed by the current machine are shown. The interface uses Russian for `ru_*` locales and English otherwise.
+
+### Update and diagnose
 
 ```bash
-omarchy plugin update io.github.villainru.panel-resources
+omarchy plugin update io.github.villainru.panel-resources --yes
 ```
 
-If an older manually copied installation reports that it is not a Git checkout, remove it and run the installation command again. Omarchy backs up non-Git plugin directories during removal.
+If a sensor is missing, check the **Dependencies** tab and right-click the widget to refresh detection. Detailed views require `btop` for system metrics, `amdgpu_top` for AMD, or `nvtop` for NVIDIA.
+
+### Remove
 
 ```bash
 omarchy plugin remove io.github.villainru.panel-resources
 ```
 
-## Metrics and Settings
+## Русский
 
-- System: CPU load, temperature, package power and average frequency; RAM, swap, and root disk usage.
-- AMD: GPU load, edge, hotspot and memory temperatures; VRAM, power, fan, and clock.
-- NVIDIA: GPU load, temperature, VRAM, power, fan, and clock.
+Показывает телеметрию процессора, памяти, диска и видеокарты прямо в панели Omarchy — компактно, настраиваемо и без отправки данных в сеть.
 
-Only sensors exposed by the current hardware are listed. CPU load and temperature plus GPU load and the primary GPU temperature are enabled by default; every available metric can be toggled from the **System** tab. Settings are stored in the widget's own entry in Omarchy `shell.json`.
+### Возможности
 
-The refresh interval is configurable from 1 to 30 seconds and defaults to 2 seconds. The icon opens the popup, right-clicking it forces a hardware rescan, and left-clicking a metric opens its detailed monitor. While the popup is open, the active underline spans the complete widget width. The UI follows the system message locale: Russian is used for `ru_*`; English is the fallback.
+- Выбор только нужных показателей для панели.
+- Загрузка, температура, мощность и частота процессора; использование RAM, swap и корневого диска.
+- Загрузка, температуры, VRAM, мощность, вентилятор и частота AMD и NVIDIA, если оборудование предоставляет эти данные.
+- Запуск `btop`, `amdgpu_top` или `nvtop` нажатием на показатель.
+- Один постоянный сборщик для всех мониторов без root-прав и сетевых запросов.
 
-## Collection Architecture
-
-One shared service owns one persistent collector, regardless of the number of monitors. Hardware paths and dependency availability are detected at startup and rescanned after a read failure, a manual refresh, or ten minutes. The first snapshot inventories all available sensors; later snapshots sample only enabled metrics.
-
-CPU load is calculated between consecutive `/proc/stat` readings without an extra sampling delay. AMD telemetry is read directly from DRM/sysfs and labeled `hwmon` sensors. NVIDIA uses one persistent `nvidia-smi --loop-ms` query instead of launching a process for every refresh.
-
-The collector is supervised by a QML heartbeat and restarted if it stalls. Each snapshot is limited to 8 KiB, 16 allowlisted metric IDs, and eight allowlisted dependency IDs. Displayed fields are length-bounded, sanitized, and rendered as plain text.
-
-## Requirements and Optional Tools
-
-Required runtime interfaces and commands:
-
-- Omarchy with the QuickShell plugin system;
-- Bash, `awk`, `df`, `realpath`, `sleep`, and readable Linux `/proc` and `/sys` interfaces;
-- the installed GPU driver and its unprivileged telemetry interfaces.
-
-Optional detailed monitors opened from bar metrics:
-
-- `btop` for CPU, memory, and disk metrics;
-- `amdgpu_top` for AMD GPU metrics;
-- `nvtop` for NVIDIA GPU metrics.
-
-AMD package power can use `zenpower` SVI2 Core and SoC rails or another explicit CPU/package, socket, or PPT `hwmon` channel. NVIDIA telemetry requires `nvidia-smi`.
-
-The **Dependencies** tab reports which drivers and optional monitors are available. Its project links are fixed, allowlisted GitHub URLs; the plugin never installs dependencies automatically.
-
-Telemetry collection does not use the network or require elevated privileges. Network access is used only when installing or updating the plugin and when opening an allowlisted dependency project page. The plugin changes only its own widget settings through the Omarchy shell API.
-
-## Validation
-
-Run the complete repository validation suite before submitting changes:
+### Установка
 
 ```bash
-make check
+omarchy plugin add https://github.com/VillainRU/omarchy-panel-resources.git --enable
 ```
+
+Если виджет не появился автоматически, добавьте его в правую секцию:
+
+```bash
+omarchy plugin enable io.github.villainru.panel-resources right
+```
+
+### Использование и настройка
+
+Нажмите на значок микросхемы, чтобы открыть панель; правая кнопка запускает повторное обнаружение оборудования. На вкладке **Система** выбираются показатели, а вкладка **Зависимости** показывает доступные драйверы и дополнительные мониторы. Интервал обновления настраивается от 1 до 30 секунд, значение по умолчанию — 2 секунды. Активное подчёркивание занимает всю ширину виджета.
+
+Отображаются только датчики, доступные на текущем компьютере. Для локали `ru_*` используется русский интерфейс, для остальных — английский.
+
+### Обновление и диагностика
+
+```bash
+omarchy plugin update io.github.villainru.panel-resources --yes
+```
+
+Если датчик не появился, проверьте вкладку **Зависимости** и обновите обнаружение правой кнопкой мыши. Для подробного просмотра нужны `btop` для системных показателей, `amdgpu_top` для AMD или `nvtop` для NVIDIA.
+
+### Удаление
+
+```bash
+omarchy plugin remove io.github.villainru.panel-resources
+```
+
+## Architecture and privacy / Архитектура и приватность
+
+One shared QML service supervises a persistent collector. Hardware is detected at startup and rescanned after read failures, a manual refresh, or ten minutes. Later samples read only enabled metrics. Telemetry stays local; network access is used only to install or update the plugin and to open fixed dependency links.
+
+Один общий QML-сервис управляет постоянным сборщиком. Оборудование определяется при запуске и повторно проверяется после ошибок чтения, ручного обновления или через десять минут. Затем опрашиваются только включённые показатели. Телеметрия остаётся локальной; сеть нужна только для установки, обновления и открытия фиксированных ссылок на зависимости.
+
+## Development / Разработка
+
+```bash
+make check   # JSON, Bash, model, security, locale, QML, and Omarchy validation
+```
+
+See [AGENTS.md](AGENTS.md) for contributor guidelines.
