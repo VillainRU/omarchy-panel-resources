@@ -195,11 +195,12 @@ function metricValueTemplate(id) {
 function normalizeRefreshIntervalMs(value) {
   var seconds = Number(value)
   if (!isFinite(seconds) || seconds < 1) seconds = 2
-  return Math.min(30, seconds) * 1000
+  return Math.round(Math.min(30, seconds)) * 1000
 }
 
-function safeSnapshot(raw) {
+function safeSnapshot(raw, previous) {
   var fallback = {
+    valid: false,
     version: 1,
     complete: true,
     language: "en",
@@ -214,11 +215,17 @@ function safeSnapshot(raw) {
     var rawText = String(raw || "")
     if (rawText.length === 0 || rawText.length > MAX_SNAPSHOT_CHARS) return fallback
     var parsed = JSON.parse(rawText)
-    if (!parsed || typeof parsed !== "object") return fallback
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
+        || !Array.isArray(parsed.metrics)
+        || (parsed.version !== undefined && parsed.version !== 1)) return fallback
     var vendor = sanitizeText(parsed.gpuVendor, 8).toLowerCase()
     if (vendor !== "amd" && vendor !== "nvidia") vendor = "none"
 
     var result = {
+      valid: true,
+      sampled: typeof parsed.sampled === "string" ? parsed.sampled.split(",").filter(function(id) {
+        return expectedMetricKind(id) !== ""
+      }) : [],
       version: 1,
       complete: parsed.complete !== false,
       language: normalizeLanguage(parsed.language),
@@ -226,7 +233,7 @@ function safeSnapshot(raw) {
       gpuTool: vendor === "amd" ? "amdgpu_top" : (vendor === "nvidia" ? "nvtop" : ""),
       gpuName: sanitizeText(parsed.gpuName, 64),
       metrics: [],
-      dependencies: []
+      dependencies: parsed.dependencies === undefined ? null : []
     }
     if (Array.isArray(parsed.dependencies)) {
       var seenDependencies = {}
@@ -253,9 +260,9 @@ function safeSnapshot(raw) {
       var id = sanitizeText(metric.id, 48)
       var kind = expectedMetricKind(id)
       if (kind === "" || seen[id]) continue
-
-      var label = sanitizeText(metric.label, 64)
-      var shortLabel = sanitizeText(metric.shortLabel, 12)
+      var cached = parsed.complete === false && previous ? metricById(previous.metrics, id) : null
+      var label = sanitizeText(metric.label === undefined && cached ? cached.label : metric.label, 64)
+      var shortLabel = sanitizeText(metric.shortLabel === undefined && cached ? cached.shortLabel : metric.shortLabel, 12)
       var value = sanitizeText(metric.value, 16)
       var detail = sanitizeText(metric.detail, 96)
       if (label === "" || shortLabel === "" || value === "") continue
@@ -286,6 +293,7 @@ function enabledMetricCsv(value) {
 }
 
 function mergeSnapshot(previous, update) {
+  if (!update || update.valid === false) return previous
   if (!update || update.complete !== false || !previous || !Array.isArray(previous.metrics)) return update
   var merged = {
     version: 1,
@@ -295,14 +303,17 @@ function mergeSnapshot(previous, update) {
     gpuTool: update.gpuTool,
     gpuName: update.gpuName,
     metrics: [],
-    dependencies: update.dependencies
+    dependencies: update.dependencies === null ? previous.dependencies : update.dependencies
   }
   var replacements = {}
   var index
   for (index = 0; index < update.metrics.length; index++) replacements[update.metrics[index].id] = update.metrics[index]
   for (index = 0; index < previous.metrics.length; index++) {
     var oldMetric = previous.metrics[index]
-    merged.metrics.push(replacements[oldMetric.id] || oldMetric)
+    var replacement = replacements[oldMetric.id]
+    if (!replacement && update.sampled && update.sampled.indexOf(oldMetric.id) !== -1)
+      replacement = Object.assign({}, oldMetric, { value: "—", detail: "" })
+    merged.metrics.push(replacement || oldMetric)
     delete replacements[oldMetric.id]
   }
   for (index = 0; index < update.metrics.length; index++) {
@@ -310,6 +321,29 @@ function mergeSnapshot(previous, update) {
     if (Object.prototype.hasOwnProperty.call(replacements, newMetric.id)) merged.metrics.push(newMetric)
   }
   return merged
+}
+
+// Keep QML delegates alive: insert/remove only for inventory changes, update a
+// row only when its displayed fields differ. Also usable with a test model.
+function syncMetricModel(target, metrics) {
+  for (var i = 0; i < metrics.length; i++) {
+    var next = metrics[i]
+    var found = i
+    while (found < target.count && target.get(found).metric.id !== next.id) found++
+    if (found === target.count) target.insert(i, { metric: next })
+    else {
+      if (found !== i) target.move(found, i, 1)
+      var old = target.get(i).metric
+      if (old.value !== next.value || old.detail !== next.detail || old.label !== next.label
+          || old.shortLabel !== next.shortLabel || old.kind !== next.kind)
+        target.setProperty(i, "metric", next)
+    }
+  }
+  if (target.count > metrics.length) target.remove(metrics.length, target.count - metrics.length)
+}
+
+function retryDelay(failures) {
+  return [1000, 2000, 5000, 15000][Math.min(3, Math.max(0, failures - 1))]
 }
 
 function normalizeEnabled(value) {
@@ -375,6 +409,8 @@ if (typeof module !== "undefined") {
     normalizeEnabled: normalizeEnabled,
     enabledMetricCsv: enabledMetricCsv,
     mergeSnapshot: mergeSnapshot,
+    syncMetricModel: syncMetricModel,
+    retryDelay: retryDelay,
     defaultEnabled: defaultEnabled,
     isEnabled: isEnabled,
     metricsForKind: metricsForKind,

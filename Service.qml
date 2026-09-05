@@ -25,6 +25,49 @@ Item {
   property bool collectorWanted: true
   property bool collectorReceivedSnapshot: false
   property bool collectorRestarting: false
+  property int failures: 0
+  property int goodSnapshots: 0
+  property double lastUpdated: 0
+  property var panelOwners: []
+  property var enabledSettings: ({})
+  readonly property alias barModel: barMetrics
+  readonly property alias systemModel: systemMetrics
+  readonly property alias gpuModel: gpuMetrics
+  readonly property var collectorPid: collectorProc.processId
+
+  ListModel { id: barMetrics; dynamicRoles: true }
+  ListModel { id: systemMetrics; dynamicRoles: true }
+  ListModel { id: gpuMetrics; dynamicRoles: true }
+
+  function updateModels() {
+    Model.syncMetricModel(barMetrics, Model.visibleMetrics(snapshot.metrics, enabledSettings))
+    if (panelOwners.length > 0) {
+      Model.syncMetricModel(systemMetrics, Model.metricsForKind(snapshot.metrics, "system"))
+      Model.syncMetricModel(gpuMetrics, Model.metricsForKind(snapshot.metrics, "gpu"))
+    }
+  }
+
+  function setPanelOpen(owner, opened) {
+    var next = panelOwners.filter(function(item) { return item !== owner })
+    if (opened) next.push(owner)
+    var changed = (next.length > 0) !== (panelOwners.length > 0)
+    panelOwners = next
+    updateModels()
+    if (changed) controlTimer.restart()
+  }
+
+  function sendConfiguration() {
+    if (!collectorProc.running) { ensureCollector(); return }
+    collectorProc.write("CONFIG " + refreshIntervalMs + " "
+      + (enabledMetricCsv || "-") + " " + (panelOwners.length > 0 ? "1" : "0") + "\n")
+    heartbeat.restart()
+  }
+
+  Timer {
+    id: controlTimer
+    interval: 100
+    onTriggered: root.sendConfiguration()
+  }
 
   readonly property string sourceDir: manifest && manifest.__sourceDir
     ? String(manifest.__sourceDir)
@@ -35,6 +78,8 @@ Item {
   readonly property int heartbeatTimeoutMs: Math.max(5000, refreshIntervalMs * 3)
 
   function configure(settings) {
+    enabledSettings = Model.normalizeEnabled(settings && settings.enabledMetrics)
+    updateModels()
     var nextInterval = Model.normalizeRefreshIntervalMs(settings && settings.refreshIntervalSec)
     var nextEnabled = Model.enabledMetricCsv(settings && settings.enabledMetrics)
     if (nextInterval === refreshIntervalMs && nextEnabled === enabledMetricCsv) {
@@ -43,7 +88,7 @@ Item {
     }
     refreshIntervalMs = nextInterval
     enabledMetricCsv = nextEnabled
-    restartCollector()
+    controlTimer.restart()
   }
 
   function ensureCollector() {
@@ -52,15 +97,27 @@ Item {
   }
 
   function refresh() {
-    restartCollector()
+    if (collectorProc.running) collectorProc.write("RESCAN\n")
+    else ensureCollector()
   }
 
   function restartCollector() {
     collectorWanted = true
     collectorRestarting = true
     heartbeat.stop()
-    restartTimer.restart()
+    errorKey = "collectionError"
+    goodSnapshots = 0
+    failures++
+    markUnavailable()
     if (collectorProc.running) collectorProc.running = false
+    else restartTimer.restart()
+  }
+
+  function markUnavailable() {
+    snapshot = Object.assign({}, snapshot, { metrics: snapshot.metrics.map(function(metric) {
+      return Object.assign({}, metric, { value: "—", detail: "" })
+    }) })
+    updateModels()
   }
 
   function captureCollectorOutput(line) {
@@ -70,8 +127,14 @@ Item {
       restartCollector()
       return
     }
-    var parsed = Model.safeSnapshot(value)
-    snapshot = Model.mergeSnapshot(snapshot, parsed)
+    var parsed = Model.safeSnapshot(value, snapshot)
+    if (!parsed.valid) { restartCollector(); return }
+    var next = Model.mergeSnapshot(snapshot, parsed)
+    if (JSON.stringify(next) !== JSON.stringify(snapshot)) snapshot = next
+    lastUpdated = Date.now()
+    goodSnapshots++
+    if (goodSnapshots >= 3) failures = 0
+    updateModels()
     collectorReceivedSnapshot = true
     errorKey = !snapshot.metrics || snapshot.metrics.length === 0 ? "sensorsNotFound" : ""
     heartbeat.restart()
@@ -87,10 +150,13 @@ Item {
 
   Timer {
     id: restartTimer
-    interval: 150
+    interval: root.failures > 0 ? Model.retryDelay(root.failures) : 150
     repeat: false
     onTriggered: {
-      if (root.collectorWanted && !collectorProc.running) collectorProc.running = true
+      if (root.collectorWanted && !collectorProc.running) {
+        heartbeat.restart()
+        collectorProc.running = true
+      }
     }
   }
 
@@ -109,9 +175,11 @@ Item {
     command: [
       root.collectorPath,
       "--watch",
+      "--control",
       "--interval-ms", String(root.refreshIntervalMs),
       "--enabled-metrics", root.enabledMetricCsv
     ]
+    stdinEnabled: true
 
     stdout: SplitParser {
       splitMarker: "\n"
@@ -127,13 +195,17 @@ Item {
       root.collectorRestarting = false
       root.collectorErrorText = ""
       root.collectorReceivedSnapshot = false
+      root.goodSnapshots = 0
+      root.sendConfiguration()
       heartbeat.restart()
     }
 
     onExited: function(exitCode) {
       heartbeat.stop()
       if (!root.collectorWanted) return
-      if (!root.collectorReceivedSnapshot) root.errorKey = "collectionError"
+      root.errorKey = "collectionError"
+      root.markUnavailable()
+      if (!root.collectorRestarting) root.failures++
       if (!root.collectorRestarting && root.collectorErrorText !== "")
         console.warn("panel-resources:", root.collectorErrorText)
       restartTimer.restart()

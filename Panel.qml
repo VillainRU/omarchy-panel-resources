@@ -33,8 +33,8 @@ Panel {
   readonly property string language: Model.normalizeLanguage(snapshot.language)
   readonly property string errorText: service && service.errorKey
     ? textFor(service.errorKey) : ""
-  readonly property var systemMetrics: Model.metricsForKind(metrics, "system")
-  readonly property var gpuMetrics: Model.metricsForKind(metrics, "gpu")
+  readonly property var systemMetrics: service ? service.systemModel : null
+  readonly property var gpuMetrics: service ? service.gpuModel : null
   readonly property var visibleBarMetrics: Model.visibleMetrics(metrics, enabledMetrics)
   readonly property string gpuToolDisplayName: snapshot.gpuTool === "amdgpu_top" ? "amdgpu_top"
     : snapshot.gpuTool === "nvtop" ? "nvtop" : textFor("gpuMonitor")
@@ -214,9 +214,9 @@ Panel {
             wrapMode: Text.Wrap
           }
 
-          PanelSeparator { visible: root.systemMetrics.length > 0 }
+          PanelSeparator { visible: root.systemMetrics && root.systemMetrics.count > 0 }
           PanelSectionHeader {
-            visible: root.systemMetrics.length > 0
+            visible: root.systemMetrics && root.systemMetrics.count > 0
             text: root.textFor("system").toUpperCase() + " · BTOP"
             foreground: root.barForeground
             fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -226,7 +226,7 @@ Panel {
             model: root.systemMetrics
             delegate: Item {
               id: systemMetricRow
-              property var metric: modelData
+              required property var metric
 
               width: contentColumn.width
               implicitHeight: Math.max(systemLabels.implicitHeight, systemValue.implicitHeight, systemToggle.implicitHeight)
@@ -293,9 +293,9 @@ Panel {
             }
           }
 
-          PanelSeparator { visible: root.gpuMetrics.length > 0 }
+          PanelSeparator { visible: root.gpuMetrics && root.gpuMetrics.count > 0 }
           PanelSectionHeader {
-            visible: root.gpuMetrics.length > 0
+            visible: root.gpuMetrics && root.gpuMetrics.count > 0
             text: root.gpuSectionTitle()
             foreground: root.barForeground
             fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -305,7 +305,7 @@ Panel {
             model: root.gpuMetrics
             delegate: Item {
               id: gpuMetricRow
-              property var metric: modelData
+              required property var metric
 
               width: contentColumn.width
               implicitHeight: Math.max(gpuLabels.implicitHeight, gpuValue.implicitHeight, gpuToggle.implicitHeight)

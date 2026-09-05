@@ -3,6 +3,8 @@
 set -u
 
 watch_mode=false
+control_mode=false
+panel_open=false
 interval_ms=2000
 enabled_metrics_csv=""
 enabled_filter_set=false
@@ -11,6 +13,7 @@ rescan_interval_sec=600
 while (( $# > 0 )); do
   case "$1" in
     --watch) watch_mode=true ;;
+    --control) control_mode=true ;;
     --interval-ms)
       shift
       (( $# > 0 )) || { printf 'missing --interval-ms value\n' >&2; exit 64; }
@@ -49,6 +52,7 @@ declare -A metric_ids=()
 declare -a dependencies=()
 declare -A dependency_ids=()
 declare -a cpu_frequency_paths=()
+declare -A metric_metadata=()
 
 if [[ $enabled_filter_set == true && -n $enabled_metrics_csv ]]; then
   IFS=',' read -r -a requested_ids <<< "$enabled_metrics_csv"
@@ -140,16 +144,24 @@ add_metric() {
   esac
   [[ $kind == "$expected_kind" && -z ${metric_ids[$id]+x} ]] || return 0
   (( ${#metrics[@]} < MAX_METRICS )) || return 0
-  sanitize_text_into safe_label "$label" 64
-  sanitize_text_into safe_short "$short_label" 12
+  if [[ -z ${metric_metadata[$id]+x} ]]; then
+    sanitize_text_into safe_label "$label" 64
+    sanitize_text_into safe_short "$short_label" 12
+    json_escape_into escaped_label "$safe_label"; json_escape_into escaped_short "$safe_short"
+    metric_metadata[$id]="\"label\":\"$escaped_label\",\"shortLabel\":\"$escaped_short\""
+  fi
   sanitize_text_into safe_value "$value" 16
   sanitize_text_into safe_detail "$detail" 96
-  [[ -n $safe_label && -n $safe_short && -n $safe_value ]] || return 0
+  [[ -n $safe_value ]] || return 0
   json_escape_into escaped_id "$id"; json_escape_into escaped_kind "$kind"
-  json_escape_into escaped_label "$safe_label"; json_escape_into escaped_short "$safe_short"
   json_escape_into escaped_value "$safe_value"; json_escape_into escaped_detail "$safe_detail"
-  printf -v item '{"id":"%s","kind":"%s","label":"%s","shortLabel":"%s","value":"%s","detail":"%s"}' \
-    "$escaped_id" "$escaped_kind" "$escaped_label" "$escaped_short" "$escaped_value" "$escaped_detail"
+  if [[ $emit_complete == true || -z ${known_metric_ids[$id]+x} ]]; then
+    printf -v item '{"id":"%s","kind":"%s",%s,"value":"%s","detail":"%s"}' \
+      "$escaped_id" "$escaped_kind" "${metric_metadata[$id]}" "$escaped_value" "$escaped_detail"
+    known_metric_ids[$id]=1
+  else
+    printf -v item '{"id":"%s","value":"%s","detail":"%s"}' "$escaped_id" "$escaped_value" "$escaped_detail"
+  fi
   metric_ids[$id]=1
   metrics+=("$item")
 }
@@ -173,6 +185,8 @@ read_cpu_totals_into() {
 }
 
 reset_detection() {
+  metric_metadata=(); known_metric_ids=()
+  disk_sample_second=-30; disk_cached_value=""; disk_cached_detail=""
   dependencies=(); dependency_ids=(); cpu_frequency_paths=()
   cpu_temp_path=""; cpu_temp_detail=""; cpu_power_path_primary=""; cpu_power_path_secondary=""; cpu_power_detail=""
   gpu_vendor="none"; gpu_tool=""; gpu_name=""; gpu_card=""; gpu_device=""; gpu_hwmon=""
@@ -317,7 +331,7 @@ start_nvidia_stream() {
   stop_nvidia_stream
   [[ $watch_mode == true && $gpu_vendor == nvidia && $nvidia_smi_available == true ]] || return 0
   coproc NVIDIA_STREAM {
-    nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed,clocks.current.graphics \
+    exec nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed,clocks.current.graphics \
       --format=csv,noheader,nounits --id=0 --loop-ms="$interval_ms" 2>/dev/null
   }
   nvidia_stream_fd=${NVIDIA_STREAM[0]}; nvidia_stream_pid=$NVIDIA_STREAM_PID
@@ -334,16 +348,21 @@ nvidia_metrics_requested() {
 }
 
 stop_unused_nvidia_stream() {
-  if [[ $watch_mode == true && $gpu_vendor == nvidia ]] && ! nvidia_metrics_requested; then
+  if [[ $watch_mode == true && $gpu_vendor == nvidia && $panel_open == false && $enabled_filter_set == true ]] && ! nvidia_metrics_requested; then
     stop_nvidia_stream
   fi
 }
 
 read_nvidia_line() {
-  local output_name=$1 query_line=""
+  local output_name=$1 query_line="" newer_line="" drain_count=0
   if [[ $watch_mode == true ]]; then
     [[ -n $nvidia_stream_fd ]] || return 1
     IFS= read -r -t 2 query_line <&"$nvidia_stream_fd" || return 1
+    # Read the newest buffered sample after a delayed iteration, not an old
+    # backlog. Bound the drain so a noisy child cannot starve system metrics.
+    while (( drain_count < 8 )) && IFS= read -r -t 0.001 newer_line <&"$nvidia_stream_fd"; do
+      query_line=$newer_line; drain_count=$((drain_count + 1))
+    done
   else
     IFS= read -r query_line < <(nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed,clocks.current.graphics \
       --format=csv,noheader,nounits --id=0 2>/dev/null) || return 1
@@ -448,11 +467,15 @@ collect_snapshot() {
     add_metric "memory.swap" "system" "$label_swap" "SWP" "${percent}%" "$used_text / $total_text"
   fi
   if metric_requested "disk.root" "$collect_all"; then
-    read -r disk_total disk_used disk_available disk_percent < <(df -P -B1 / 2>/dev/null | awk 'NR == 2 { gsub(/%/, "", $5); print $2, $3, $4, $5; exit }')
-    if [[ ${disk_total:-0} =~ ^[0-9]+$ ]] && (( disk_total > 0 )); then
-      format_gib_into used_text "$disk_used"; format_gib_into total_text "$disk_total"
-      add_metric "disk.root" "system" "$label_disk" "SSD" "${disk_percent}%" "$used_text / $total_text"
+    if (( SECONDS - disk_sample_second >= 30 )); then
+      disk_sample_second=$SECONDS; disk_cached_value=""; disk_cached_detail=""
+      { read -r _; read -r _ disk_total disk_used disk_available disk_percent _; } < <(df -P -B1 / 2>/dev/null)
+      if [[ ${disk_total:-0} =~ ^[0-9]+$ ]] && (( disk_total > 0 )); then
+        format_gib_into used_text "$disk_used"; format_gib_into total_text "$disk_total"
+        disk_cached_value=$disk_percent; disk_cached_detail="$used_text / $total_text"
+      fi
     fi
+    [[ -n $disk_cached_value ]] && add_metric "disk.root" "system" "$label_disk" "SSD" "$disk_cached_value" "$disk_cached_detail"
   fi
   if [[ $gpu_vendor == amd && -n $gpu_device ]]; then
     [[ -d $gpu_device ]] || needs_rescan=true
@@ -480,7 +503,8 @@ collect_snapshot() {
       percent=$((vram_used * 100 / vram_total)); format_gib_into used_text "$vram_used"; format_gib_into total_text "$vram_total"
       add_metric "gpu.vram" "gpu" "$label_vram" "VRAM" "${percent}%" "$used_text / $total_text"
     fi
-  elif [[ $gpu_vendor == nvidia && $nvidia_smi_available == true ]]; then
+  elif [[ $gpu_vendor == nvidia && $nvidia_smi_available == true ]] && { [[ $collect_all == true ]] || nvidia_metrics_requested; }; then
+    [[ $watch_mode == true && -z $nvidia_stream_pid ]] && start_nvidia_stream
     collect_nvidia_metrics
   fi
 }
@@ -491,10 +515,51 @@ emit_snapshot() {
   if (( ${#dependencies[@]} > 0 )); then printf -v dependencies_json '%s,' "${dependencies[@]}"; dependencies_json=${dependencies_json%,}; fi
   json_escape_into escaped_language "$language"; json_escape_into escaped_vendor "$gpu_vendor"
   json_escape_into escaped_tool "$gpu_tool"; json_escape_into escaped_name "$gpu_name"
-  printf -v payload '{"version":1,"complete":%s,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","metrics":[%s],"dependencies":[%s]}' \
-    "$complete" "$escaped_language" "$escaped_vendor" "$escaped_tool" "$escaped_name" "$metrics_json" "$dependencies_json"
+  local dependency_field="" sampled_csv="" sampled_id
+  if [[ $collect_all == true ]]; then
+    for sampled_id in "${!known_metric_ids[@]}"; do sampled_csv+="${sampled_csv:+,}$sampled_id"; done
+  else
+    for sampled_id in "${!enabled_metrics[@]}"; do sampled_csv+="${sampled_csv:+,}$sampled_id"; done
+  fi
+  if [[ $complete == true ]]; then dependency_field=",\"dependencies\":[$dependencies_json]"; fi
+  printf -v payload '{"version":1,"complete":%s,"language":"%s","gpuVendor":"%s","gpuTool":"%s","gpuName":"%s","sampled":"%s","metrics":[%s]%s}' \
+    "$complete" "$escaped_language" "$escaped_vendor" "$escaped_tool" "$escaped_name" "$sampled_csv" "$metrics_json" "$dependency_field"
   if (( ${#payload} > MAX_OUTPUT_BYTES )); then printf 'collector output exceeds %d bytes\n' "$MAX_OUTPUT_BYTES" >&2; return 70; fi
   printf '%s\n' "$payload"
+}
+
+declare -A known_metric_ids=()
+emit_complete=true
+disk_sample_second=-30; disk_cached_value=""; disk_cached_detail=""
+
+# Bounded, allowlisted control messages; never evaluate command text.
+apply_control() {
+  local message=$1 command next_interval next_csv next_open extra id old_interval=$interval_ms
+  read -r command next_interval next_csv next_open extra <<< "$message"
+  if [[ $command == RESCAN && -z ${next_interval:-} ]]; then
+    needs_rescan=true; last_detection_second=$((SECONDS - 30)); return
+  fi
+  [[ $command == CONFIG && $next_interval =~ ^[0-9]{4,5}$ && $next_open =~ ^[01]$ && -z ${extra:-} ]] || return
+  (( next_interval >= 1000 && next_interval <= 30000 )) || return
+  [[ $next_csv == - || $next_csv =~ ^[a-z.,]+$ ]] || return
+  enabled_metrics=(); enabled_metrics_csv=""; enabled_filter_set=true
+  local -a ids=()
+  IFS=, read -r -a ids <<< "$next_csv"
+  for id in "${ids[@]}"; do
+    case "$id" in
+      cpu.load|cpu.temp|cpu.power|cpu.frequency|memory.ram|memory.swap|disk.root|gpu.load|gpu.temp|gpu.edge|gpu.hotspot|gpu.memory_temp|gpu.power|gpu.fan|gpu.frequency|gpu.vram)
+        [[ -n ${enabled_metrics[$id]+x} ]] && continue
+        enabled_metrics[$id]=1
+        enabled_metrics_csv+="${enabled_metrics_csv:+,}$id"
+        ;;
+    esac
+  done
+  panel_open=false; [[ $next_open == 1 ]] && panel_open=true
+  interval_ms=$next_interval
+  printf -v interval_delay '%d.%03d' "$((interval_ms / 1000))" "$((interval_ms % 1000))"
+  (( old_interval != interval_ms )) && stop_nvidia_stream
+  stop_unused_nvidia_stream
+  return 0
 }
 
 previous_cpu_total=""; previous_cpu_idle=""
@@ -507,12 +572,24 @@ stop_unused_nvidia_stream
 
 if [[ $watch_mode == true ]]; then
   while true; do
-    sleep "$interval_delay"
+    if [[ $control_mode == true ]]; then
+      message=""
+      if IFS= read -r -t "$interval_delay" -n 1024 message; then
+        apply_control "$message"
+      elif [[ $? -le 128 ]]; then
+        exit 0
+      fi
+    else
+      sleep "$interval_delay"
+    fi
     complete=false
-    if [[ $needs_rescan == true || $((SECONDS - last_detection_second)) -ge $rescan_interval_sec ]]; then
+    if { [[ $needs_rescan == true ]] && (( SECONDS - last_detection_second >= 30 )); } || (( SECONDS - last_detection_second >= rescan_interval_sec )); then
       stop_nvidia_stream; discover_hardware; start_nvidia_stream; complete=true
     fi
-    collect_snapshot "$complete"
+    emit_complete=$complete
+    sample_all=$complete
+    [[ $panel_open == true || $enabled_filter_set == false ]] && sample_all=true
+    collect_snapshot "$sample_all"
     emit_snapshot "$complete" || exit $?
     stop_unused_nvidia_stream
   done

@@ -6,7 +6,7 @@ Live CPU, memory, disk, AMD, and NVIDIA telemetry for the Omarchy bar — compac
 
 ![Panel Resources panel](preview.png)
 
-**Version:** Omarchy plugin `0.4.2`
+**Version:** Omarchy plugin `0.5.0`
 
 ## English
 
@@ -35,6 +35,8 @@ omarchy plugin enable io.github.villainru.panel-resources right
 Click the chip icon to open the panel; right-click it to rescan hardware. The **System** tab controls visible metrics, while **Dependencies** reports available drivers and optional monitors. The refresh interval is configurable from 1 to 30 seconds and defaults to 2 seconds. The active underline spans the full widget width.
 
 Only sensors exposed by the current machine are shown. The interface uses Russian for `ru_*` locales and English otherwise.
+
+Opening the panel refreshes all available metrics; closing it resumes selected-only polling. Disk usage updates every 30 seconds. Settings take effect without restarting the collector, and unavailable readings display **—**.
 
 ### Update and diagnose
 
@@ -80,6 +82,8 @@ omarchy plugin enable io.github.villainru.panel-resources right
 
 Отображаются только датчики, доступные на текущем компьютере. Для локали `ru_*` используется русский интерфейс, для остальных — английский.
 
+При открытой панели обновляются все доступные показатели, при закрытой — только выбранные. Заполнение диска обновляется раз в 30 секунд. Настройки применяются без перезапуска сборщика; недоступные значения обозначаются **—**.
+
 ### Обновление и диагностика
 
 ```bash
@@ -100,6 +104,10 @@ One shared QML service supervises a persistent collector. Hardware is detected a
 
 Один общий QML-сервис управляет постоянным сборщиком. Оборудование определяется при запуске и повторно проверяется после ошибок чтения, ручного обновления или через десять минут. Затем опрашиваются только включённые показатели. Телеметрия остаётся локальной; сеть нужна только для установки, обновления и открытия фиксированных ссылок на зависимости.
 
+The popup loads on first use. Shared models update rows in place; automatic rescans are limited to once per 30 seconds, and failed collectors retry after 1, 2, 5, then 15 seconds.
+
+Окно загружается при первом открытии. Общие модели обновляют строки на месте; автоматическое обнаружение ограничено одним разом в 30 секунд, повторные запуски после сбоя происходят через 1, 2, 5 и затем 15 секунд.
+
 ## Development / Разработка
 
 ```bash
@@ -107,3 +115,5 @@ make check   # JSON, Bash, model, security, locale, QML, and Omarchy validation
 ```
 
 See [AGENTS.md](AGENTS.md) for contributor guidelines.
+
+Release notes: [CHANGELOG.md](CHANGELOG.md).

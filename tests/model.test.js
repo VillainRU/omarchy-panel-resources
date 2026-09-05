@@ -117,3 +117,35 @@ assert.deepEqual(Model.safeSnapshot("x".repeat(8193)).metrics, [])
 assert.deepEqual(Model.normalizeEnabled({ "cpu.load": true, "evil.metric": true }), { "cpu.load": true })
 
 console.log("Model tests passed")
+
+for (const raw of ['not-json', '[]', '{}', '{"version":2,"metrics":[]}']) {
+  assert.equal(Model.safeSnapshot(raw).valid, false)
+  assert.equal(Model.mergeSnapshot(snapshot, Model.safeSnapshot(raw)), snapshot)
+}
+const delta = Model.safeSnapshot(JSON.stringify({
+  version: 1, complete: false, sampled: 'cpu.load,gpu.hotspot',
+  metrics: [{id: 'cpu.load', value: '55%', detail: 'current'}]
+}), snapshot)
+const updated = Model.mergeSnapshot(snapshot, delta)
+assert.equal(Model.metricById(updated.metrics, 'cpu.load').label, 'CPU load')
+assert.equal(Model.metricById(updated.metrics, 'gpu.hotspot').value, '—')
+assert.deepEqual(updated.dependencies, snapshot.dependencies)
+assert.deepEqual([1,2,3,4,5].map(Model.retryDelay), [1000,2000,5000,15000,15000])
+
+const rows = []
+let inserts = 0, writes = 0
+const list = {
+  get count() { return rows.length },
+  get: i => rows[i],
+  insert: (i, row) => { inserts++; rows.splice(i, 0, row) },
+  remove: (i, n) => rows.splice(i, n),
+  move: (from, to) => rows.splice(to, 0, rows.splice(from, 1)[0]),
+  setProperty: (i, key, value) => { writes++; rows[i][key] = value }
+}
+Model.syncMetricModel(list, snapshot.metrics)
+Model.syncMetricModel(list, JSON.parse(JSON.stringify(snapshot.metrics)))
+assert.equal(inserts, snapshot.metrics.length)
+assert.equal(writes, 0)
+Model.syncMetricModel(list, updated.metrics)
+assert.equal(inserts, snapshot.metrics.length)
+assert.equal(writes, 2)

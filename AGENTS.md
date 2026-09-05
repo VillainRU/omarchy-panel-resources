@@ -8,6 +8,8 @@ This repository contains one Omarchy QuickShell bar plugin. `Service.qml` owns t
 
 - `make check` runs the complete validation suite: JSON and Bash syntax checks, Node tests, security tests, locale/output assertions, `qmllint`, and `omarchy plugin validate .`.
 - `node tests/model.test.js` quickly exercises parsing, localization, defaults, and hostile-input handling.
+- `node tests/collector.test.js` exercises live control messages, popup polling, a simulated NVIDIA backend, sensor failures, and EOF shutdown.
+- `node tests/runtime.test.js` runs an isolated offscreen Quickshell service to check stable delegates, configuration without restarts, and error recovery.
 - `bash tests/security.test.sh` verifies output limits, allowlists, timeouts, plain-text rendering, and safe URL handling.
 - `PANEL_RESOURCES_LANG=en bin/panel-resources-collect | jq .` inspects a live collector snapshot; use `ru` to check Russian labels.
 - `qmllint BarWidget.qml Panel.qml Service.qml` checks QML without launching the shell.

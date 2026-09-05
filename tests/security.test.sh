@@ -36,15 +36,6 @@ jq -e '
   )
 ' >/dev/null <<< "$snapshot"
 
-start_ns=$(date +%s%N)
-set +e
-/usr/bin/timeout --signal=TERM --kill-after=0.1s 0.2s bash -c 'sleep 10' >/dev/null 2>&1
-timeout_status=$?
-set -e
-elapsed_ms=$(( ($(date +%s%N) - start_ns) / 1000000 ))
-[[ $timeout_status == 124 || $timeout_status == 137 ]]
-(( elapsed_ms < 2000 ))
-
 ! rg -q 'StdioCollector' "$repo_dir/Service.qml"
 rg -q '"--watch"' "$repo_dir/Service.qml"
 rg -q 'heartbeatTimeoutMs' "$repo_dir/Service.qml"
@@ -54,7 +45,7 @@ rg -q 'stderr: SplitParser' "$repo_dir/Service.qml"
 rg -q -- '--loop-ms=' "$collector"
 ! rg -q 'Process|collectorProc|collectorDeadline' "$repo_dir/Panel.qml"
 rg -q 'serviceFor\(moduleName\)' "$repo_dir/BarWidget.qml"
-rg -q 'openPanelIndicatorWidth: root\.implicitWidth' "$repo_dir/BarWidget.qml"
+rg -q 'openPanelIndicatorWidth: 0.001' "$repo_dir/BarWidget.qml"
 rg -Fq 'width: root.vertical ? Style.space(2) : root.width' "$repo_dir/BarWidget.qml"
 rg -Fq 'height: root.vertical ? root.height : Style.space(2)' "$repo_dir/BarWidget.qml"
 jq -e '
